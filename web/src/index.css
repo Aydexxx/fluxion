@@ -1,0 +1,232 @@
+@import "tailwindcss";
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Fluxion design system
+   Near-black, atmospheric, one electric-violet accent used with restraint.
+   ─────────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* Base / surfaces — a short, deliberate elevation ladder */
+  --color-void: #050507;
+  --color-base: #08080a;
+  --color-surface: #0e0e13;
+  --color-surface-2: #15151c;
+  --color-raised: #1c1c26;
+
+  /* Ink */
+  --color-ink: #ececf1;
+  --color-muted: #8d8d99;
+  --color-faint: #595965;
+
+  /* The one accent — electric violet, with an indigo lean */
+  --color-accent: #7c5cff;
+  --color-accent-bright: #9a82ff;
+  --color-accent-deep: #5a3ff0;
+
+  /* Secondary glow, used extremely sparingly */
+  --color-spark: #4cc2ff;
+
+  /* Node category hues (applied at low opacity / small surface area) */
+  --color-cat-trigger: #8b7bff;
+  --color-cat-action: #4c9bff;
+  --color-cat-ai: #c26bff;
+  --color-cat-logic: #e0a33e;
+  --color-cat-output: #34d0a8;
+
+  --radius-card: 16px;
+}
+
+@layer base {
+  * {
+    border-color: color-mix(in oklab, white 8%, transparent);
+  }
+
+  html {
+    color-scheme: dark;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-base);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss01";
+    overflow: hidden;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.02em;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-accent) 38%, transparent);
+    color: white;
+  }
+
+  /* Quiet, modern scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, white 14%, transparent) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: color-mix(in oklab, white 12%, transparent);
+    border-radius: 999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklab, white 20%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in oklab, var(--color-accent) 70%, transparent);
+    outline-offset: 2px;
+  }
+
+  input, textarea, select, button {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  /* Frosted, faintly luminous panel surface */
+  .glass {
+    background: color-mix(in oklab, var(--color-surface) 86%, transparent);
+    backdrop-filter: blur(18px) saturate(140%);
+    border: 1px solid color-mix(in oklab, white 8%, transparent);
+  }
+
+  .hairline {
+    border: 1px solid color-mix(in oklab, white 8%, transparent);
+  }
+
+  .text-gradient {
+    background: linear-gradient(180deg, #ffffff 0%, color-mix(in oklab, var(--color-ink) 70%, transparent) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Soft accent bloom — the cinematic ambient light */
+  .bloom {
+    background:
+      radial-gradient(60% 50% at 50% -10%, color-mix(in oklab, var(--color-accent) 22%, transparent), transparent 70%),
+      radial-gradient(40% 40% at 85% 110%, color-mix(in oklab, var(--color-spark) 10%, transparent), transparent 70%);
+  }
+
+  .accent-ring {
+    box-shadow:
+      0 0 0 1px color-mix(in oklab, var(--color-accent) 55%, transparent),
+      0 0 28px -6px color-mix(in oklab, var(--color-accent) 55%, transparent);
+  }
+
+  .grain {
+    background-image: radial-gradient(color-mix(in oklab, white 3.5%, transparent) 0.5px, transparent 0.5px);
+    background-size: 4px 4px;
+  }
+
+  @keyframes flux-pan {
+    0% { transform: translate3d(0, 0, 0); }
+    100% { transform: translate3d(-40px, -28px, 0); }
+  }
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   React Flow overrides — bend it fully to the design system
+   ─────────────────────────────────────────────────────────────────────────── */
+.react-flow {
+  --xy-background-color: transparent;
+  --xy-edge-stroke-default: color-mix(in oklab, white 22%, transparent);
+  --xy-edge-stroke-width-default: 1.5;
+  --xy-connectionline-stroke-default: var(--color-accent);
+}
+
+.react-flow__attribution {
+  background: transparent;
+  color: color-mix(in oklab, white 18%, transparent);
+  font-size: 10px;
+}
+.react-flow__attribution a {
+  color: color-mix(in oklab, white 30%, transparent);
+}
+
+.react-flow__edge-path {
+  transition: stroke 0.25s ease, filter 0.25s ease;
+}
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--color-accent);
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--color-accent) 60%, transparent));
+}
+
+.react-flow__connectionline path,
+.react-flow__connection-path {
+  stroke: var(--color-accent);
+  stroke-width: 2;
+  filter: drop-shadow(0 0 6px color-mix(in oklab, var(--color-accent) 60%, transparent));
+}
+
+/* Handles — small, precise, glow on hover */
+.react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  border: 1.5px solid color-mix(in oklab, white 28%, transparent);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.react-flow__handle:hover,
+.react-flow__handle.connectingfrom,
+.react-flow__handle.connectingto {
+  background: var(--color-accent);
+  border-color: var(--color-accent-bright);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--color-accent) 22%, transparent);
+}
+
+.react-flow__node {
+  font-family: var(--font-sans);
+}
+.react-flow__node:focus,
+.react-flow__node:focus-visible {
+  outline: none;
+}
+
+.react-flow__controls {
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px -12px rgba(0, 0, 0, 0.8);
+  border: 1px solid color-mix(in oklab, white 8%, transparent);
+}
+.react-flow__controls-button {
+  background: color-mix(in oklab, var(--color-surface) 90%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid color-mix(in oklab, white 6%, transparent);
+  color: var(--color-muted);
+  width: 30px;
+  height: 30px;
+}
+.react-flow__controls-button:hover {
+  background: var(--color-raised);
+  color: var(--color-ink);
+}
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.react-flow__minimap {
+  background: color-mix(in oklab, var(--color-void) 80%, transparent);
+  border: 1px solid color-mix(in oklab, white 7%, transparent);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.react-flow__minimap-mask {
+  fill: color-mix(in oklab, var(--color-base) 72%, transparent);
+}

@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum WorkspaceRole {
+  owner
+  admin
+  member
+}
+
+enum RunTrigger {
+  manual
+  webhook
+  schedule
+}
+
+enum ExecutionStatus {
+  queued
+  running
+  success
+  failed
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+
+  ownedWorkspaces Workspace[]
+  memberships     WorkspaceMember[]
+}
+
+/// Multi-tenant container; everything else (workflows, credentials) is scoped to a workspace.
+model Workspace {
+  id      String @id @default(cuid())
+  name    String
+  ownerId String
+
+  owner       User              @relation(fields: [ownerId], references: [id])
+  members     WorkspaceMember[]
+  workflows   Workflow[]
+  credentials Credential[]
+
+  @@index([ownerId])
+}
+
+/// RBAC join table between User and Workspace.
+model WorkspaceMember {
+  userId      String
+  workspaceId String
+  role        WorkspaceRole @default(member)
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@id([userId, workspaceId])
+  @@index([workspaceId])
+}
+
+model Workflow {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  /// Unguessable token for this workflow's inbound webhook URL (/webhooks/:token).
+  webhookToken String? @unique
+  /// DAG (nodes + edges) for this workflow.
+  definition  Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  runs      WorkflowRun[]
+
+  @@index([workspaceId])
+}
+
+/// One execution of a Workflow.
+model WorkflowRun {
+  id         String          @id @default(cuid())
+  workflowId String
+  status     ExecutionStatus @default(queued)
+  trigger    RunTrigger
+  startedAt  DateTime?
+  finishedAt DateTime?
+  error      String?
+  payload    Json?
+
+  workflow       Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  nodeExecutions NodeExecution[]
+
+  @@index([workflowId])
+}
+
+/// Per-node result inside a WorkflowRun.
+model NodeExecution {
+  id         String          @id @default(cuid())
+  runId      String
+  nodeId     String
+  status     ExecutionStatus @default(queued)
+  input      Json?
+  output     Json?
+  error      String?
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+}
+
+/// Encrypted secret used by workflow nodes (e.g. API keys). Encryption is wired in a later phase.
+model Credential {
+  id            String @id @default(cuid())
+  workspaceId   String
+  name          String
+  type          String
+  encryptedData String
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+}
