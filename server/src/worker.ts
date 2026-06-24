@@ -1,8 +1,12 @@
 import { Worker } from "bullmq";
 import { env } from "./config/env";
+import { logger } from "./config/logger";
 import type { WorkflowDefinition } from "./dag/types";
 import { createDefaultRegistry } from "./engine/registry";
 import { PrismaRunRecorder } from "./engine/prismaRecorder";
+import { nodemailerSender } from "./engine/clients/email";
+import { pgQueryRunner } from "./engine/clients/db";
+import { createPrismaCredentialAccessor } from "./services/credentials";
 import { createRedisConnection } from "./queue/connection";
 import { WORKFLOW_RUNS_QUEUE, type WorkflowRunJobData } from "./queue/workflowQueue";
 import { WORKFLOW_SCHEDULES_QUEUE, type ScheduleJobData } from "./queue/scheduleQueue";
@@ -29,13 +33,21 @@ const deps: ProcessRunDeps = {
   },
   registry: createDefaultRegistry(),
   llm: env.llm,
+  // Secrets are resolved + decrypted here, per run, scoped to the run's workspace.
+  credentialsFor: createPrismaCredentialAccessor,
+  email: nodemailerSender,
+  db: pgQueryRunner,
+  limits: { httpTimeoutMs: env.nodeTimeouts.httpMs, aiTimeoutMs: env.nodeTimeouts.aiMs },
   onEvent,
 };
 
 const worker = new Worker<WorkflowRunJobData>(
   WORKFLOW_RUNS_QUEUE,
   async (job) => {
-    await runJob(job.data.runId, deps);
+    const log = logger.child({ runId: job.data.runId, workflowId: job.data.workflowId, attempt: job.attemptsMade + 1 });
+    log.info("run.started");
+    const result = await runJob(job.data.runId, deps);
+    log.info({ status: result.status }, "run.finished");
   },
   { connection, concurrency: env.queue.concurrency },
 );
@@ -44,6 +56,7 @@ const worker = new Worker<WorkflowRunJobData>(
 // `queued`; once attempts are exhausted it's recorded `failed` with context.
 worker.on("failed", async (job, err) => {
   if (!job) return;
+  logger.warn({ runId: job.data.runId, attempt: job.attemptsMade, err: err?.message }, "run.attempt.failed");
   await handleJobFailure(deps, {
     runId: job.data.runId,
     attemptsMade: job.attemptsMade,
@@ -53,11 +66,11 @@ worker.on("failed", async (job, err) => {
 });
 
 worker.on("completed", (job) => {
-  console.log(`[worker] run ${job.data.runId} completed`);
+  logger.info({ runId: job.data.runId }, "run.completed");
 });
 
 worker.on("error", (err) => {
-  console.error("[worker] error", err);
+  logger.error({ err }, "worker.error");
 });
 
 // Scheduler worker: each cron tick is a job here; turn it into a real run
@@ -79,11 +92,14 @@ const scheduleWorker = new Worker<ScheduleJobData>(
 );
 
 scheduleWorker.on("error", (err) => {
-  console.error("[scheduler] error", err);
+  logger.error({ err }, "scheduler.error");
 });
 
-console.log(`[worker] listening on "${WORKFLOW_RUNS_QUEUE}" (concurrency ${env.queue.concurrency}, attempts ${env.queue.attempts})`);
-console.log(`[scheduler] listening on "${WORKFLOW_SCHEDULES_QUEUE}"`);
+logger.info(
+  { queue: WORKFLOW_RUNS_QUEUE, concurrency: env.queue.concurrency, attempts: env.queue.attempts },
+  "worker.listening",
+);
+logger.info({ queue: WORKFLOW_SCHEDULES_QUEUE }, "scheduler.listening");
 
 async function shutdown(): Promise<void> {
   await worker.close();

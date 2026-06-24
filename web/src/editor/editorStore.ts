@@ -7,8 +7,8 @@ import {
   type EdgeChange,
   type NodeChange,
 } from "@xyflow/react";
-import { workflowApi, runApi, errorMessage } from "../lib/api";
-import type { RunSummary, WorkflowRun } from "../lib/types";
+import { workflowApi, runApi, credentialApi, errorMessage } from "../lib/api";
+import type { Credential, RunSummary, WorkflowRun } from "../lib/types";
 import type { RunLiveEvent } from "../lib/realtimeEvents";
 import { toast } from "../store/toasts";
 import { createNode, definitionToFlow, flowToDefinition, newEdgeId, type FluxEdge, type FluxNode } from "./graph";
@@ -23,9 +23,14 @@ interface EditorState {
   error: string | null;
 
   id: string | null;
+  workspaceId: string | null;
   name: string;
   isActive: boolean;
   webhookToken: string | null;
+
+  /** Workspace credentials (metadata only) available to node credential pickers. */
+  credentials: Credential[];
+  credentialsManagerOpen: boolean;
 
   nodes: FluxNode[];
   edges: FluxEdge[];
@@ -52,6 +57,8 @@ interface EditorState {
 
   load: (id: string) => Promise<void>;
   reset: () => void;
+  refreshCredentials: () => Promise<void>;
+  setCredentialsManagerOpen: (open: boolean) => void;
 
   onNodesChange: (changes: NodeChange<FluxNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FluxEdge>[]) => void;
@@ -109,9 +116,12 @@ export const useEditor = create<EditorState>((set, get) => ({
   status: "idle",
   error: null,
   id: null,
+  workspaceId: null,
   name: "",
   isActive: true,
   webhookToken: null,
+  credentials: [],
+  credentialsManagerOpen: false,
   nodes: [],
   edges: [],
   selectedNodeId: null,
@@ -130,6 +140,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       set({
         status: "ready",
         id: wf.id,
+        workspaceId: wf.workspaceId,
         name: wf.name,
         isActive: wf.isActive,
         webhookToken: wf.webhookToken,
@@ -139,12 +150,27 @@ export const useEditor = create<EditorState>((set, get) => ({
         dirty: false,
         warnings: [],
         savedAt: null,
+        credentials: [],
+        credentialsManagerOpen: false,
         ...EMPTY_RUN_STATE,
       });
+      void get().refreshCredentials();
     } catch (err) {
       set({ status: "error", error: errorMessage(err, "Could not load this workflow") });
     }
   },
+
+  refreshCredentials: async () => {
+    const workspaceId = get().workspaceId;
+    if (!workspaceId) return;
+    try {
+      set({ credentials: await credentialApi.list(workspaceId) });
+    } catch {
+      // Non-fatal: pickers just show no options until the next refresh.
+    }
+  },
+
+  setCredentialsManagerOpen: (open) => set({ credentialsManagerOpen: open }),
 
   reset: () => {
     unsubscribeFromRun();
@@ -152,9 +178,12 @@ export const useEditor = create<EditorState>((set, get) => ({
       status: "idle",
       error: null,
       id: null,
+      workspaceId: null,
       name: "",
       isActive: true,
       webhookToken: null,
+      credentials: [],
+      credentialsManagerOpen: false,
       nodes: [],
       edges: [],
       selectedNodeId: null,

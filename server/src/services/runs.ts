@@ -18,6 +18,7 @@ export async function enqueueRunForWorkflow(
   workflowId: string,
   trigger: RunTriggerValue,
   payload: unknown,
+  options: { replayOfId?: string } = {},
 ): Promise<RunRecord> {
   const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
   if (!workflow) throw new NotFoundError("Workflow not found");
@@ -29,10 +30,30 @@ export async function enqueueRunForWorkflow(
   }
 
   const recorder = new PrismaRunRecorder(prisma);
-  const runId = await recorder.enqueueRun({ workflowId, trigger, payload });
+  const runId = await recorder.enqueueRun({ workflowId, trigger, payload, replayOfId: options.replayOfId ?? null });
   await enqueueWorkflowRun({ runId, workflowId, payload });
 
   return recorder.getRun(runId);
+}
+
+/**
+ * Replays a past run: re-enqueues a fresh run of the same workflow with the
+ * same trigger type and payload, linked back to the origin via `replayOfId`.
+ * Authorizes the caller as a member of the origin run's workspace.
+ */
+export async function replayRun(runId: string, userId: string): Promise<RunRecord> {
+  const origin = await prisma.workflowRun.findUnique({
+    where: { id: runId },
+    select: { id: true, workflowId: true, trigger: true, payload: true },
+  });
+  if (!origin) throw new NotFoundError("Run not found");
+
+  const workspaceId = await resolveWorkflowWorkspaceId(origin.workflowId);
+  await requireWorkspaceRole(workspaceId, userId, "member");
+
+  return enqueueRunForWorkflow(origin.workflowId, origin.trigger as RunTriggerValue, origin.payload, {
+    replayOfId: origin.id,
+  });
 }
 
 /**
@@ -71,6 +92,58 @@ function toSummary(run: PrismaWorkflowRun): RunSummaryRecord {
     finishedAt: run.finishedAt?.toISOString() ?? null,
     error: run.error,
   };
+}
+
+/** A run summary enriched with its workflow name + lineage, for the workspace runs dashboard. */
+export interface WorkspaceRunSummary extends RunSummaryRecord {
+  workflowName: string;
+  createdAt: string | null;
+  replayOfId: string | null;
+}
+
+export interface ListWorkspaceRunsFilters {
+  status?: ExecutionStatusValue;
+  workflowId?: string;
+  /** ISO timestamps bounding `createdAt`. */
+  from?: string;
+  to?: string;
+  limit?: number;
+}
+
+/**
+ * Lists runs across every workflow in a workspace, newest first, with optional
+ * status / workflow / date-range filters. Authorizes the caller as a member.
+ */
+export async function listWorkspaceRuns(
+  workspaceId: string,
+  userId: string,
+  filters: ListWorkspaceRunsFilters = {},
+): Promise<WorkspaceRunSummary[]> {
+  await requireWorkspaceMember(workspaceId, userId);
+
+  const createdAt =
+    filters.from || filters.to
+      ? { gte: filters.from ? new Date(filters.from) : undefined, lte: filters.to ? new Date(filters.to) : undefined }
+      : undefined;
+
+  const runs = await prisma.workflowRun.findMany({
+    where: {
+      workflow: { workspaceId },
+      status: filters.status,
+      workflowId: filters.workflowId,
+      createdAt,
+    },
+    include: { workflow: { select: { name: true } } },
+    orderBy: { createdAt: "desc" },
+    take: Math.min(filters.limit ?? 100, 500),
+  });
+
+  return runs.map((run) => ({
+    ...toSummary(run),
+    workflowName: run.workflow.name,
+    createdAt: run.createdAt?.toISOString() ?? null,
+    replayOfId: run.replayOfId ?? null,
+  }));
 }
 
 /** Lists a workflow's past runs, most recent first. Any workspace member may view history. */

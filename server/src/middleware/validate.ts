@@ -38,3 +38,15 @@ export function validateQuery<T>(schema: ZodType<T>) {
     next();
   };
 }
+
+/** Validates `req.params` (route params) against a zod schema. */
+export function validateParams<T>(schema: ZodType<T>) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const result = schema.safeParse(req.params);
+    if (!result.success) {
+      sendValidationError(res, result.error.issues.map((issue) => issue.message).join("; "));
+      return;
+    }
+    next();
+  };
+}

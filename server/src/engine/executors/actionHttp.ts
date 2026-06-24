@@ -1,4 +1,7 @@
 import type { NodeExecutor } from "../types";
+import { resolveTimeout, withTimeout } from "../timeout";
+
+const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 
 interface HttpConfig {
   method?: string;
@@ -6,6 +9,8 @@ interface HttpConfig {
   /** Either a record, or the editor's multiline "Key: Value" string. */
   headers?: Record<string, string> | string;
   body?: unknown;
+  /** Per-node timeout override (ms). */
+  timeoutMs?: number;
 }
 
 export interface HttpOutput {
@@ -46,7 +51,21 @@ export const httpExecutor: NodeExecutor = {
       }
     }
 
-    const res = await context.fetch(url, { method, headers, body });
+    // Bound how long a node can wait, and actually abort the request when the
+    // runtime supports it, so a hung endpoint can't pin a worker forever.
+    const timeoutMs = resolveTimeout(config.timeoutMs, context.limits?.httpTimeoutMs ?? DEFAULT_HTTP_TIMEOUT_MS);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await withTimeout(
+        context.fetch(url, { method, headers, body, signal: controller.signal }),
+        timeoutMs,
+        `HTTP node (${method} ${url})`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
 
     const responseHeaders: Record<string, string> = {};
     res.headers.forEach((value, key) => {

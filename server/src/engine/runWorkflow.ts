@@ -6,15 +6,18 @@ import type { RunRecord, RunRecorder } from "./persistence";
 import { noopEventSink, type RunEventSink } from "./events";
 import type {
   CredentialAccessor,
+  DbQueryRunner,
+  EmailSender,
   ExecutionContext,
   LlmSettings,
   NodeInput,
+  NodeLimits,
   RunTriggerValue,
 } from "./types";
 
-/** Credentials store is wired later; until then nodes get a stub that resolves nothing. */
+/** Default accessor for runs with no credential store wired (tests, dry runs): resolves nothing. */
 export const stubCredentialAccessor: CredentialAccessor = {
-  async get() {
+  async resolve() {
     return null;
   },
 };
@@ -31,6 +34,12 @@ export interface RunWorkflowParams {
   llm: LlmSettings;
   credentials?: CredentialAccessor;
   fetchImpl?: typeof fetch;
+  /** Mail transport for the email node (worker injects a real SMTP sender). */
+  email?: EmailSender;
+  /** Database client for the database node (worker injects a real Postgres runner). */
+  db?: DbQueryRunner;
+  /** Default per-node time budgets (worker injects from env). */
+  limits?: NodeLimits;
   /** Receives lifecycle events for real-time status propagation. */
   onEvent?: RunEventSink;
 }
@@ -63,6 +72,9 @@ export async function runWorkflow(params: RunWorkflowParams): Promise<RunRecord>
     credentials: params.credentials ?? stubCredentialAccessor,
     llm: params.llm,
     fetch: params.fetchImpl ?? globalThis.fetch,
+    email: params.email,
+    db: params.db,
+    limits: params.limits,
   };
 
   const nodesById = new Map(nodes.map((node) => [node.id, node]));

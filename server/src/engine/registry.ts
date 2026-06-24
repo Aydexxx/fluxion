@@ -2,8 +2,14 @@ import type { NodeExecutor } from "./types";
 import { manualTriggerExecutor, scheduleTriggerExecutor, webhookTriggerExecutor } from "./executors/triggerManual";
 import { httpExecutor } from "./executors/actionHttp";
 import { transformExecutor } from "./executors/actionTransform";
+import { emailExecutor } from "./executors/actionEmail";
+import { slackExecutor } from "./executors/actionSlack";
+import { databaseExecutor } from "./executors/actionDatabase";
 import { conditionExecutor } from "./executors/logicCondition";
+import { loopExecutor } from "./executors/logicLoop";
+import { filterExecutor } from "./executors/logicFilter";
 import { llmExecutor } from "./executors/aiLlm";
+import { agentExecutor } from "./executors/aiAgent";
 import { outputResponseExecutor } from "./executors/outputResponse";
 
 /**
@@ -42,7 +48,13 @@ export function createDefaultRegistry(): NodeExecutorRegistry {
     .register(scheduleTriggerExecutor)
     .register(httpExecutor)
     .register(transformExecutor)
+    .register(emailExecutor)
+    .register(slackExecutor)
+    .register(databaseExecutor)
     .register(conditionExecutor)
+    .register(loopExecutor)
+    .register(filterExecutor)
     .register(llmExecutor)
+    .register(agentExecutor)
     .register(outputResponseExecutor);
 }

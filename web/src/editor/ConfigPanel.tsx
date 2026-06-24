@@ -60,6 +60,9 @@ function PanelInner({
 }) {
   const spec = getNodeSpec(node.data.nodeType);
   const accent = categoryAccent(node.data.nodeType);
+  // getConfigForm looks up a stable component reference from a static registry
+  // keyed by node type; it never creates a new component, so identity is
+  // stable across renders despite being resolved during render.
   const Form = getConfigForm(node.data.nodeType);
   const Icon = spec.icon;
 
@@ -118,6 +121,8 @@ function PanelInner({
       <div className="flex-1 overflow-y-auto p-4">
         {tab === "config" ? (
           Form ? (
+            // Form is a stable lookup from a static registry (see getConfigForm above), not a fresh component.
+            // eslint-disable-next-line react-hooks/static-components
             <Form nodeId={node.id} config={node.data.config} onChange={onConfig} />
           ) : (
             <p className="text-sm text-muted">This node has no configurable settings.</p>

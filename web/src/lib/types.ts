@@ -87,9 +87,45 @@ export interface WorkflowRun {
   trigger: RunTriggerType;
   payload: unknown;
   error: string | null;
+  createdAt: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Origin run id when this run is a replay, else null. */
+  replayOfId: string | null;
   nodeExecutions: NodeExecution[];
+}
+
+/* ── Credentials (encrypted vault) ──────────────────────────────────────── */
+
+export interface CredentialFieldSpec {
+  key: string;
+  label: string;
+  secret: boolean;
+  optional?: boolean;
+  placeholder?: string;
+}
+
+/** A credential type and its field schema, from GET /credentials/types. */
+export interface CredentialTypeSpec {
+  type: string;
+  label: string;
+  blurb: string;
+  fields: CredentialFieldSpec[];
+  previewKey: string | null;
+}
+
+/** Client-safe credential metadata — never includes secret values. */
+export interface Credential {
+  id: string;
+  workspaceId: string;
+  name: string;
+  type: string;
+  /** Non-secret field values (e.g. SMTP host), safe to display and pre-fill. */
+  meta: Record<string, string>;
+  /** Last 4 chars of the primary secret, or null. */
+  last4: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Compact run shape from GET /workflows/:id/runs (no node executions). */
@@ -101,4 +137,59 @@ export interface RunSummary {
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
+}
+
+/** Run summary enriched with workflow name + replay lineage, from GET /runs. */
+export interface WorkspaceRunSummary extends RunSummary {
+  workflowName: string;
+  createdAt: string | null;
+  replayOfId: string | null;
+}
+
+export interface RunFilters {
+  status?: ExecutionStatus;
+  workflowId?: string;
+  from?: string;
+  to?: string;
+}
+
+/* ── Analytics ──────────────────────────────────────────────────────────── */
+
+export interface AnalyticsSummary {
+  total: number;
+  success: number;
+  failed: number;
+  running: number;
+  queued: number;
+  successRate: number;
+  avgDurationMs: number;
+}
+
+export interface RunsOverTimePoint {
+  date: string;
+  success: number;
+  failed: number;
+  total: number;
+}
+
+export interface FailingWorkflow {
+  workflowId: string;
+  name: string;
+  failures: number;
+  total: number;
+}
+
+export interface FailingNode {
+  workflowId: string;
+  workflowName: string;
+  nodeId: string;
+  failures: number;
+}
+
+export interface AnalyticsResult {
+  range: { from: string; to: string };
+  summary: AnalyticsSummary;
+  runsOverTime: RunsOverTimePoint[];
+  topFailingWorkflows: FailingWorkflow[];
+  topFailingNodes: FailingNode[];
 }

@@ -255,6 +255,274 @@ function AiForm({ config, onChange }: ConfigFormProps) {
   );
 }
 
+/* ── credential picker (shared by secret-using nodes) ───────────────────── */
+function CredentialPicker({ credType, value, onChange }: { credType: string; value: string; onChange: (id: string) => void }) {
+  const credentials = useEditor((s) => s.credentials);
+  const openManager = useEditor((s) => s.setCredentialsManagerOpen);
+  const options = credentials.filter((c) => c.type === credType);
+
+  return (
+    <FieldShell label="Credential" hint="Resolved and decrypted only at run time, on the worker.">
+      <div className="flex items-center gap-2">
+        <Select value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Select a credential…</option>
+          {options.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+              {c.last4 ? ` ••••${c.last4}` : ""}
+            </option>
+          ))}
+        </Select>
+        <button
+          type="button"
+          onClick={() => openManager(true)}
+          className="shrink-0 rounded-lg border border-white/8 px-2.5 py-2 text-[12px] text-muted transition-colors hover:border-white/14 hover:text-ink"
+        >
+          Manage
+        </button>
+      </div>
+      {options.length === 0 ? (
+        <p className="mt-1.5 text-[11.5px] text-faint">No matching credentials yet — add one with “Manage”.</p>
+      ) : null}
+    </FieldShell>
+  );
+}
+
+/* ── action.email ───────────────────────────────────────────────────────── */
+function EmailForm({ config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  return (
+    <div className="space-y-4">
+      <CredentialPicker credType="smtp" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
+      <FieldShell label="To">
+        <TextInput placeholder="someone@example.com" value={str(config.to)} onChange={(e) => set({ to: e.target.value })} />
+      </FieldShell>
+      <FieldShell label="Subject">
+        <TextInput placeholder="Subject line" value={str(config.subject)} onChange={(e) => set({ subject: e.target.value })} />
+      </FieldShell>
+      <FieldShell label="Body" hint="Plain text. Reference upstream output with {{ }} placeholders.">
+        <TextArea rows={5} placeholder={"Hello {{ input.name }},"} value={str(config.text)} onChange={(e) => set({ text: e.target.value })} />
+      </FieldShell>
+    </div>
+  );
+}
+
+/* ── action.slack ───────────────────────────────────────────────────────── */
+function SlackForm({ config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  return (
+    <div className="space-y-4">
+      <CredentialPicker credType="slack_webhook" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
+      <FieldShell label="Message" hint="Posted to the Slack/Discord incoming webhook.">
+        <TextArea rows={5} placeholder={"Deploy finished for {{ input.repo }} ✅"} value={str(config.text)} onChange={(e) => set({ text: e.target.value })} />
+      </FieldShell>
+    </div>
+  );
+}
+
+/* ── action.database ────────────────────────────────────────────────────── */
+function readLines(value: unknown): string {
+  return Array.isArray(value) ? value.map(String).join("\n") : str(value);
+}
+
+function DatabaseForm({ config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const readOnly = config.readOnly !== false;
+  return (
+    <div className="space-y-4">
+      <CredentialPicker credType="database" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
+      <FieldShell label="Query" hint="Use $1, $2… placeholders; values are bound, never concatenated.">
+        <TextArea rows={4} placeholder={"SELECT * FROM users WHERE id = $1"} value={str(config.query)} onChange={(e) => set({ query: e.target.value })} />
+      </FieldShell>
+      <FieldShell label="Parameters" hint="One per line, in order ($1, $2…). Supports {{ }} placeholders.">
+        <TextArea
+          rows={2}
+          placeholder={"{{ input.userId }}"}
+          value={readLines(config.params)}
+          onChange={(e) => set({ params: e.target.value.split("\n").map((s) => s.trim()).filter((s) => s !== "") })}
+        />
+      </FieldShell>
+      <FieldShell label="Access">
+        <Select value={readOnly ? "read" : "write"} onChange={(e) => set({ readOnly: e.target.value === "read" })}>
+          <option value="read">Read-only (SELECT / WITH)</option>
+          <option value="write">Allow writes</option>
+        </Select>
+      </FieldShell>
+    </div>
+  );
+}
+
+/* ── logic.loop / iterate ───────────────────────────────────────────────── */
+interface FieldRow {
+  as: string;
+  path: string;
+}
+
+function readFieldRows(config: Record<string, unknown>): FieldRow[] {
+  const raw = config.fields;
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  return raw.map((f) => ({ as: str((f as FieldRow)?.as), path: str((f as FieldRow)?.path) }));
+}
+
+function LoopForm({ config, onChange }: ConfigFormProps) {
+  const rows = readFieldRows(config);
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const commit = (next: FieldRow[]) => set({ fields: next });
+
+  return (
+    <div className="space-y-4">
+      <FieldShell label="Items" hint="An array to iterate, e.g. {{ input.users }}. Empty uses the single upstream array.">
+        <TextInput placeholder="{{ input.users }}" value={str(config.items)} onChange={(e) => set({ items: e.target.value })} />
+      </FieldShell>
+      <FieldShell label="Project each item" hint="Optional. Map output keys to dotted paths within each item. Leave empty to pass items through.">
+        <div className="space-y-2">
+          {rows.map((r, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <TextInput placeholder="key" value={r.as} onChange={(e) => commit(rows.map((x, j) => (j === i ? { ...x, as: e.target.value } : x)))} />
+              <span className="text-faint">←</span>
+              <TextInput placeholder="user.email" value={r.path} onChange={(e) => commit(rows.map((x, j) => (j === i ? { ...x, path: e.target.value } : x)))} />
+              <button
+                type="button"
+                aria-label="Remove field"
+                onClick={() => commit(rows.filter((_, j) => j !== i))}
+                className="shrink-0 rounded-md p-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink"
+              >
+                <TrashIcon />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => commit([...rows, { as: "", path: "" }])}
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-accent-bright transition-colors hover:bg-accent/10"
+          >
+            <PlusIcon className="text-[14px]" /> Add field
+          </button>
+        </div>
+      </FieldShell>
+    </div>
+  );
+}
+
+/* ── logic.filter ───────────────────────────────────────────────────────── */
+const FILTER_OPERATORS = [
+  { value: "truthy", label: "is truthy" },
+  { value: "falsy", label: "is falsy" },
+  { value: "==", label: "equals (==)" },
+  { value: "!=", label: "not equals (!=)" },
+  { value: ">", label: "greater than (>)" },
+  { value: "<", label: "less than (<)" },
+  { value: ">=", label: "at least (>=)" },
+  { value: "<=", label: "at most (<=)" },
+  { value: "contains", label: "contains" },
+  { value: "not_contains", label: "does not contain" },
+];
+
+const NO_VALUE_OPS = new Set(["truthy", "falsy"]);
+
+function FilterForm({ config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const operator = str(config.operator, "truthy");
+  return (
+    <div className="space-y-4">
+      <FieldShell label="Items" hint="The array to filter, e.g. {{ input.users }}. Empty uses the single upstream array.">
+        <TextInput placeholder="{{ input.users }}" value={str(config.items)} onChange={(e) => set({ items: e.target.value })} />
+      </FieldShell>
+      <FieldShell label="Field" hint="Dotted path read from each item. Leave empty to test the item itself.">
+        <TextInput placeholder="status" value={str(config.field)} onChange={(e) => set({ field: e.target.value })} />
+      </FieldShell>
+      <div className="grid grid-cols-2 gap-2">
+        <FieldShell label="Operator">
+          <Select value={operator} onChange={(e) => set({ operator: e.target.value })}>
+            {FILTER_OPERATORS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+        </FieldShell>
+        <FieldShell label="Value">
+          <TextInput
+            placeholder={NO_VALUE_OPS.has(operator) ? "—" : "active"}
+            disabled={NO_VALUE_OPS.has(operator)}
+            value={str(config.value)}
+            onChange={(e) => set({ value: e.target.value })}
+          />
+        </FieldShell>
+      </div>
+    </div>
+  );
+}
+
+/* ── ai.agent ───────────────────────────────────────────────────────────── */
+const AGENT_TOOLS = [
+  { value: "rag_search", label: "Knowledge search (RAG)" },
+  { value: "http_get", label: "HTTP GET (read-only)" },
+];
+
+function AgentForm({ config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const tools = Array.isArray(config.tools) ? (config.tools as string[]) : ["rag_search"];
+  const knowledge = Array.isArray(config.knowledge) ? (config.knowledge as unknown[]).map(String) : [];
+
+  const toggleTool = (value: string, on: boolean) =>
+    set({ tools: on ? [...new Set([...tools, value])] : tools.filter((t) => t !== value) });
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-2">
+        <FieldShell label="Provider">
+          <Select value={str(config.provider, "none")} onChange={(e) => set({ provider: e.target.value })}>
+            {AI_PROVIDERS.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </Select>
+        </FieldShell>
+        <FieldShell label="Model">
+          <TextInput placeholder="(provider default)" value={str(config.model)} onChange={(e) => set({ model: e.target.value })} />
+        </FieldShell>
+      </div>
+      <FieldShell label="Goal" hint="What the agent should accomplish. Supports {{ }} placeholders.">
+        <TextArea rows={4} placeholder={"Answer the customer question: {{ input.question }}"} value={str(config.goal)} onChange={(e) => set({ goal: e.target.value })} />
+      </FieldShell>
+      <FieldShell label="Tools">
+        <div className="space-y-1.5">
+          {AGENT_TOOLS.map((t) => (
+            <label key={t.value} className="flex items-center gap-2 text-[13px] text-muted">
+              <input
+                type="checkbox"
+                checked={tools.includes(t.value)}
+                onChange={(e) => toggleTool(t.value, e.target.checked)}
+                className="size-3.5 accent-[var(--color-accent)]"
+              />
+              {t.label}
+            </label>
+          ))}
+        </div>
+      </FieldShell>
+      <FieldShell label="Knowledge" hint="One document per line. Searched by the rag_search tool.">
+        <TextArea
+          rows={4}
+          placeholder={"Refunds are processed within 5 business days.\nStandard shipping takes 3 to 7 days."}
+          value={knowledge.join("\n")}
+          onChange={(e) => set({ knowledge: e.target.value.split("\n").map((s) => s.trim()).filter((s) => s !== "") })}
+        />
+      </FieldShell>
+      <FieldShell label="Max steps" hint="Tool-use iterations before the agent must answer (1–8).">
+        <TextInput
+          type="number"
+          min={1}
+          max={8}
+          value={typeof config.maxSteps === "number" ? String(config.maxSteps) : "4"}
+          onChange={(e) => set({ maxSteps: Math.max(1, Math.min(8, Number(e.target.value) || 4)) })}
+        />
+      </FieldShell>
+    </div>
+  );
+}
+
 /* ── logic.condition ────────────────────────────────────────────────────── */
 function ConditionForm({ config, onChange }: ConfigFormProps) {
   return (
@@ -289,8 +557,14 @@ const FORMS: Record<string, ComponentType<ConfigFormProps>> = {
   "trigger.schedule": ScheduleForm,
   "action.http": HttpForm,
   "action.transform": TransformForm,
+  "action.email": EmailForm,
+  "action.slack": SlackForm,
+  "action.database": DatabaseForm,
   "ai.llm": AiForm,
+  "ai.agent": AgentForm,
   "logic.condition": ConditionForm,
+  "logic.loop": LoopForm,
+  "logic.filter": FilterForm,
   "output.response": ResponseForm,
 };
 

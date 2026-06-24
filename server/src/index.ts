@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createApp } from "./app";
 import { env } from "./config/env";
+import { logger } from "./config/logger";
 import { attachRealtime } from "./realtime/io";
 
 const app = createApp();
@@ -10,5 +11,5 @@ const httpServer = createServer(app);
 attachRealtime(httpServer);
 
 httpServer.listen(env.port, () => {
-  console.log(`API + realtime listening on http://localhost:${env.port}`);
+  logger.info({ port: env.port }, "api.listening");
 });

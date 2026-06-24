@@ -1,6 +1,14 @@
 import dotenv from "dotenv";
+import { loadEncryptionKey } from "../services/crypto";
 
 dotenv.config();
+
+/**
+ * Dev-only fallback key. Real deployments MUST set `CREDENTIALS_KEY`; this
+ * fixed value only exists so a fresh local checkout boots without ceremony.
+ * Rotating to a new key makes existing encrypted credentials unreadable.
+ */
+const DEV_CREDENTIALS_KEY = "2mLPAPxi2jTwoTjIR2QeSFgD1ZU2t2vBX5183NZIb54=";
 
 /** Read a required env var, throwing a clear error if it is missing. */
 function required(name: string, fallback?: string): string {
@@ -17,6 +25,13 @@ function int(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/** Parse a boolean env var ("true"/"1" -> true), falling back when unset. */
+function bool(name: string, fallback: boolean): boolean {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  return value === "true" || value === "1";
+}
+
 /** Valid LLM providers; anything else in the env falls back to the dev default. */
 const LLM_PROVIDERS = ["none", "ollama", "openai"] as const;
 type LlmProvider = (typeof LLM_PROVIDERS)[number];
@@ -26,15 +41,20 @@ function llmProvider(): LlmProvider {
   return (LLM_PROVIDERS as readonly string[]).includes(value ?? "") ? (value as LlmProvider) : "ollama";
 }
 
+const nodeEnv = process.env.NODE_ENV ?? "development";
+
 /** Strongly-typed, validated view of the process environment. */
 export const env = {
-  nodeEnv: process.env.NODE_ENV ?? "development",
+  nodeEnv,
   port: Number.parseInt(required("PORT", "4000"), 10),
   jwtSecret: required("JWT_SECRET", "dev-secret-change-me"),
   jwtExpiresIn: required("JWT_EXPIRES_IN", "7d"),
   clientUrl: required("CLIENT_URL", "http://localhost:5173"),
   // Redis powers both the BullMQ queue and the Socket.IO cross-process adapter.
   redisUrl: required("REDIS_URL", "redis://localhost:6379"),
+  // Master key for credential encryption at rest (AES-256-GCM). Loaded and
+  // validated once at startup so a bad key fails fast. See README for rotation.
+  credentialsKey: loadEncryptionKey(required("CREDENTIALS_KEY", DEV_CREDENTIALS_KEY)),
   // Distributed execution knobs. attempts/backoff drive retry + dead-letter;
   // concurrency caps how many runs a single worker executes at once so external
   // APIs aren't overwhelmed.
@@ -53,6 +73,27 @@ export const env = {
     openaiBaseUrl: process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1",
     openaiApiKey: process.env.OPENAI_API_KEY || undefined,
     openaiModel: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+  },
+  // Per-node execution timeouts (ms). A hung HTTP/AI node can't pin a worker
+  // forever; node config may lower these per node, never raise above sanity.
+  nodeTimeouts: {
+    httpMs: int("NODE_HTTP_TIMEOUT_MS", 30_000),
+    aiMs: int("NODE_AI_TIMEOUT_MS", 60_000),
+  },
+  // Rate limiting for abuse-prone surfaces (auth + public webhooks). Disabled
+  // under test so route tests aren't throttled; the limiter is unit-tested
+  // directly. Toggle/limits are env-overridable for ops tuning.
+  rateLimit: {
+    enabled: bool("RATE_LIMIT_ENABLED", nodeEnv !== "test"),
+    authWindowMs: int("AUTH_RATE_LIMIT_WINDOW_MS", 15 * 60_000),
+    authMax: int("AUTH_RATE_LIMIT_MAX", 50),
+    webhookWindowMs: int("WEBHOOK_RATE_LIMIT_WINDOW_MS", 60_000),
+    webhookMax: int("WEBHOOK_RATE_LIMIT_MAX", 120),
+  },
+  // Structured logging. Silent under test to keep output clean; pretty-ish JSON
+  // otherwise. Correlation ids (request id / run id) are attached per log.
+  log: {
+    level: process.env.LOG_LEVEL ?? (nodeEnv === "test" ? "silent" : "info"),
   },
 } as const;
 

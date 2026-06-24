@@ -3,7 +3,7 @@ import type { RunEventSink } from "../engine/events";
 import type { RunRecord, RunRecorder } from "../engine/persistence";
 import type { NodeExecutorRegistry } from "../engine/registry";
 import { runWorkflow } from "../engine/runWorkflow";
-import type { LlmSettings } from "../engine/types";
+import type { CredentialAccessor, DbQueryRunner, EmailSender, LlmSettings, NodeLimits } from "../engine/types";
 
 /** Thrown when a run finishes in a failed state, so the queue treats the job as failed and retries. */
 export class RunFailedError extends Error {
@@ -19,6 +19,14 @@ export interface ProcessRunDeps {
   loadWorkflow: (workflowId: string) => Promise<{ definition: WorkflowDefinition; workspaceId: string } | null>;
   registry: NodeExecutorRegistry;
   llm: LlmSettings;
+  /** Builds a workspace-scoped credential accessor; secrets are decrypted only here, on the worker. */
+  credentialsFor?: (workspaceId: string) => CredentialAccessor;
+  /** Real mail transport for the email node. */
+  email?: EmailSender;
+  /** Real database client for the database node. */
+  db?: DbQueryRunner;
+  /** Default per-node time budgets. */
+  limits?: NodeLimits;
   fetchImpl?: typeof fetch;
   onEvent?: RunEventSink;
 }
@@ -48,6 +56,10 @@ export async function processRun(runId: string, deps: ProcessRunDeps): Promise<R
     registry: deps.registry,
     recorder: deps.recorder,
     llm: deps.llm,
+    credentials: deps.credentialsFor?.(workflow.workspaceId),
+    email: deps.email,
+    db: deps.db,
+    limits: deps.limits,
     fetchImpl: deps.fetchImpl,
     onEvent: deps.onEvent,
   });

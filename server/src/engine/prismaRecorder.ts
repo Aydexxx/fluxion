@@ -16,13 +16,19 @@ function toJson(value: unknown): Prisma.InputJsonValue {
 export class PrismaRunRecorder implements RunRecorder {
   constructor(private readonly prisma: PrismaClient) {}
 
-  async enqueueRun(data: { workflowId: string; trigger: RunTriggerValue; payload: unknown }): Promise<string> {
+  async enqueueRun(data: {
+    workflowId: string;
+    trigger: RunTriggerValue;
+    payload: unknown;
+    replayOfId?: string | null;
+  }): Promise<string> {
     const run = await this.prisma.workflowRun.create({
       data: {
         workflowId: data.workflowId,
         trigger: data.trigger,
         status: "queued",
         payload: toJson(data.payload),
+        replayOfId: data.replayOfId ?? null,
       },
       select: { id: true },
     });
@@ -105,8 +111,10 @@ export class PrismaRunRecorder implements RunRecorder {
       trigger: run.trigger as RunTriggerValue,
       payload: run.payload ?? null,
       error: run.error,
+      createdAt: run.createdAt?.toISOString() ?? null,
       startedAt: run.startedAt?.toISOString() ?? null,
       finishedAt: run.finishedAt?.toISOString() ?? null,
+      replayOfId: run.replayOfId ?? null,
       nodeExecutions,
     };
   }

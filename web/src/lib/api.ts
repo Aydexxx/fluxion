@@ -1,12 +1,17 @@
 import axios, { AxiosError } from "axios";
 import type {
+  AnalyticsResult,
   AuthResponse,
+  Credential,
+  CredentialTypeSpec,
+  RunFilters,
   RunSummary,
   UpdateWorkflowResponse,
   Workflow,
   WorkflowDefinition,
   WorkflowRun,
   WorkflowSummary,
+  WorkspaceRunSummary,
   Workspace,
 } from "./types";
 
@@ -101,6 +106,29 @@ export const workflowApi = {
   },
 };
 
+export const credentialApi = {
+  /** The credential type catalog used to render the right fields per type. */
+  async types(): Promise<CredentialTypeSpec[]> {
+    const { data } = await api.get<CredentialTypeSpec[]>("/credentials/types");
+    return data;
+  },
+  async list(workspaceId: string): Promise<Credential[]> {
+    const { data } = await api.get<Credential[]>("/credentials", { params: { workspaceId } });
+    return data;
+  },
+  async create(input: { workspaceId: string; name: string; type: string; data: Record<string, string> }): Promise<Credential> {
+    const { data } = await api.post<Credential>("/credentials", input);
+    return data;
+  },
+  async update(id: string, patch: { name?: string; data?: Record<string, string> }): Promise<Credential> {
+    const { data } = await api.put<Credential>(`/credentials/${id}`, patch);
+    return data;
+  },
+  async remove(id: string): Promise<void> {
+    await api.delete(`/credentials/${id}`);
+  },
+};
+
 export const runApi = {
   /** Trigger a synchronous run; resolves with the finished run + node executions. */
   async start(workflowId: string, payload?: unknown): Promise<WorkflowRun> {
@@ -113,6 +141,23 @@ export const runApi = {
   },
   async get(runId: string): Promise<WorkflowRun> {
     const { data } = await api.get<WorkflowRun>(`/runs/${runId}`);
+    return data;
+  },
+  /** List runs across a whole workspace, with optional filters (runs dashboard). */
+  async listWorkspace(workspaceId: string, filters: RunFilters & { limit?: number } = {}): Promise<WorkspaceRunSummary[]> {
+    const { data } = await api.get<WorkspaceRunSummary[]>("/runs", { params: { workspaceId, ...filters } });
+    return data;
+  },
+  /** Re-run a past run with the same trigger payload; returns the queued replay. */
+  async replay(runId: string): Promise<WorkflowRun> {
+    const { data } = await api.post<WorkflowRun>(`/runs/${runId}/replay`);
+    return data;
+  },
+};
+
+export const analyticsApi = {
+  async get(workspaceId: string, range: { from?: string; to?: string } = {}): Promise<AnalyticsResult> {
+    const { data } = await api.get<AnalyticsResult>("/analytics", { params: { workspaceId, ...range } });
     return data;
   },
 };

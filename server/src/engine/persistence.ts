@@ -20,8 +20,11 @@ export interface RunRecord {
   trigger: RunTriggerValue;
   payload: unknown;
   error: string | null;
+  createdAt: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /** Origin run id when this run is a replay, else null. */
+  replayOfId: string | null;
   nodeExecutions: NodeExecutionRecord[];
 }
 
@@ -32,7 +35,13 @@ export interface RunRecord {
  */
 export interface RunRecorder {
   /** Create a run in `queued` state (the enqueue path). Returns the new run id. */
-  enqueueRun(data: { workflowId: string; trigger: RunTriggerValue; payload: unknown }): Promise<string>;
+  enqueueRun(data: {
+    workflowId: string;
+    trigger: RunTriggerValue;
+    payload: unknown;
+    /** Set when this run is a replay of an earlier run. */
+    replayOfId?: string | null;
+  }): Promise<string>;
   /**
    * Transition an existing run into `running` for a fresh attempt: stamps
    * `startedAt`, clears any error/finish, and discards node executions from a
@@ -63,7 +72,12 @@ export class InMemoryRunRecorder implements RunRecorder {
     return `${prefix}_${this.seq}`;
   }
 
-  async enqueueRun(data: { workflowId: string; trigger: RunTriggerValue; payload: unknown }): Promise<string> {
+  async enqueueRun(data: {
+    workflowId: string;
+    trigger: RunTriggerValue;
+    payload: unknown;
+    replayOfId?: string | null;
+  }): Promise<string> {
     const id = this.nextId("run");
     this.runs.set(id, {
       id,
@@ -72,8 +86,10 @@ export class InMemoryRunRecorder implements RunRecorder {
       trigger: data.trigger,
       payload: data.payload ?? null,
       error: null,
+      createdAt: new Date().toISOString(),
       startedAt: null,
       finishedAt: null,
+      replayOfId: data.replayOfId ?? null,
       nodeExecutions: [],
     });
     return id;

@@ -5,6 +5,8 @@ import { navigate, useRoute } from "./lib/router";
 import { AuthPage } from "./pages/AuthPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { EditorPage } from "./pages/EditorPage";
+import { RunsPage } from "./pages/RunsPage";
+import { AnalyticsPage } from "./pages/AnalyticsPage";
 import { Toasts } from "./components/Toasts";
 import { Logo, SpinnerIcon } from "./components/icons";
 
@@ -58,6 +60,8 @@ function Routed({
 
   if (routeName === "editor" && workflowId) return <EditorPage workflowId={workflowId} />;
   if (routeName === "dashboard") return <DashboardPage />;
+  if (routeName === "runs") return <RunsPage />;
+  if (routeName === "analytics") return <AnalyticsPage />;
   return <Splash />;
 }
 

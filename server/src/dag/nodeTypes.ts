@@ -8,8 +8,14 @@ export const NODE_TYPES = [
   "trigger.schedule",
   "action.http",
   "action.transform",
+  "action.email",
+  "action.slack",
+  "action.database",
   "ai.llm",
+  "ai.agent",
   "logic.condition",
+  "logic.loop",
+  "logic.filter",
   "output.response",
 ] as const;
 

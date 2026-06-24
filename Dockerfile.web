@@ -1,0 +1,26 @@
+# Builds and serves the web app as its own static service — deliberately
+# separate from the API/worker (Dockerfile.server) so the SPA's client-side
+# routes (e.g. /runs, /analytics, /workflows/:id) never collide with the
+# API's identically-named REST endpoints, which would happen if both were
+# served from the same origin.
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY . .
+RUN npm ci
+# Vite bakes VITE_* vars into the bundle at build time, so this must be a
+# build arg (set it as a Build Variable on the Railway "web" service), not
+# just a runtime env var.
+ARG VITE_API_URL
+ENV VITE_API_URL=$VITE_API_URL
+RUN npm run build --workspace=web
+
+FROM node:24-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/web/dist ./web/dist
+COPY --from=build /app/web/package.json ./web/package.json
+
+EXPOSE 4173
+CMD ["npm", "run", "start", "--workspace=web"]

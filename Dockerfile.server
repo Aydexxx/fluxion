@@ -1,0 +1,21 @@
+# Builds the API + worker image (server workspace). Used by two Railway
+# services — "api" (default CMD) and "worker" (override the start command to
+# `node server/dist/worker.js`) — sharing the same build so they're always in
+# sync.
+FROM node:24-alpine AS build
+WORKDIR /app
+COPY . .
+RUN npm ci
+RUN npm run build --workspace=server
+
+FROM node:24-alpine AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/server/dist ./server/dist
+COPY --from=build /app/server/package.json ./server/package.json
+COPY --from=build /app/server/prisma ./server/prisma
+COPY --from=build /app/server/prisma.config.ts ./server/prisma.config.ts
+
+EXPOSE 4000
+CMD ["node", "server/dist/index.js"]

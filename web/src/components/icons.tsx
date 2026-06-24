@@ -242,3 +242,77 @@ export function CalendarIcon(props: IconProps) {
     </Svg>
   );
 }
+
+export function MailIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="5" width="18" height="14" rx="2.5" />
+      <path d="M4 7l8 6 8-6" />
+    </Svg>
+  );
+}
+
+export function ChatIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 5.5h16a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 16.5H9l-4 3.5v-3.5H4A1.5 1.5 0 0 1 2.5 15V7A1.5 1.5 0 0 1 4 5.5Z" />
+      <path d="M7 10h10M7 13h6" />
+    </Svg>
+  );
+}
+
+export function DatabaseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <ellipse cx="12" cy="5.5" rx="7.5" ry="3" />
+      <path d="M4.5 5.5v6c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-6" />
+      <path d="M4.5 11.5v6c0 1.66 3.36 3 7.5 3s7.5-1.34 7.5-3v-6" />
+    </Svg>
+  );
+}
+
+export function LoopIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 9a6 6 0 0 1 10.5-4M20 6V2.5" />
+      <path d="M20 15a6 6 0 0 1-10.5 4M4 18v3.5" />
+      <path d="M17 5.5h3.2M3.8 18.5H7" opacity={0} />
+    </Svg>
+  );
+}
+
+export function FilterIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3.5 5.5h17l-6.5 7.5v5l-4 2.5v-7.5L3.5 5.5Z" />
+    </Svg>
+  );
+}
+
+export function BotIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="4.5" y="8" width="15" height="11" rx="3" />
+      <path d="M12 4.5V8M9 13h.01M15 13h.01M9.5 16.5h5" />
+      <path d="M2.5 12v2M21.5 12v2" />
+    </Svg>
+  );
+}
+
+export function ChartIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 4v16h16" />
+      <path d="M8 14v3M12.5 9.5v7.5M17 6v11" />
+    </Svg>
+  );
+}
+
+export function KeyIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="8" cy="8" r="4.5" />
+      <path d="M11.2 11.2 20 20M17 17l2-2M14 14l2-2" />
+    </Svg>
+  );
+}

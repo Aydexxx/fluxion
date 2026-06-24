@@ -8,6 +8,7 @@ import { WorkflowCanvas } from "../editor/WorkflowCanvas";
 import { ConfigPanel } from "../editor/ConfigPanel";
 import { RunResultsBar } from "../editor/RunResultsBar";
 import { RunHistoryDrawer } from "../editor/RunHistoryDrawer";
+import { CredentialsManager } from "../components/CredentialsManager";
 import { navigate } from "../lib/router";
 import { Logo, SpinnerIcon } from "../components/icons";
 
@@ -16,6 +17,10 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
   const error = useEditor((s) => s.error);
   const load = useEditor((s) => s.load);
   const reset = useEditor((s) => s.reset);
+  const workspaceId = useEditor((s) => s.workspaceId);
+  const credentialsManagerOpen = useEditor((s) => s.credentialsManagerOpen);
+  const setCredentialsManagerOpen = useEditor((s) => s.setCredentialsManagerOpen);
+  const refreshCredentials = useEditor((s) => s.refreshCredentials);
 
   useEffect(() => {
     void load(workflowId);
@@ -38,6 +43,14 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
           </main>
         </div>
       </div>
+      <CredentialsManager
+        open={credentialsManagerOpen}
+        workspaceId={workspaceId}
+        onClose={() => {
+          setCredentialsManagerOpen(false);
+          void refreshCredentials();
+        }}
+      />
     </ReactFlowProvider>
   );
 }

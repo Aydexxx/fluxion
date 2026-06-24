@@ -94,15 +94,22 @@ model WorkflowRun {
   workflowId String
   status     ExecutionStatus @default(queued)
   trigger    RunTrigger
+  createdAt  DateTime        @default(now())
   startedAt  DateTime?
   finishedAt DateTime?
   error      String?
   payload    Json?
+  /// When this run is a replay, the run it was replayed from (kept for lineage).
+  replayOfId String?
 
   workflow       Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   nodeExecutions NodeExecution[]
+  replayOf       WorkflowRun?    @relation("RunReplays", fields: [replayOfId], references: [id], onDelete: SetNull)
+  replays        WorkflowRun[]   @relation("RunReplays")
 
   @@index([workflowId])
+  @@index([createdAt])
+  @@index([replayOfId])
 }
 
 /// Per-node result inside a WorkflowRun.
@@ -122,13 +129,16 @@ model NodeExecution {
   @@index([runId])
 }
 
-/// Encrypted secret used by workflow nodes (e.g. API keys). Encryption is wired in a later phase.
+/// Encrypted secret used by workflow nodes (e.g. API keys). `encryptedData` holds the
+/// AES-256-GCM packed ciphertext of the credential's JSON fields; raw secrets never leave the server.
 model Credential {
-  id            String @id @default(cuid())
+  id            String   @id @default(cuid())
   workspaceId   String
   name          String
   type          String
   encryptedData String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 

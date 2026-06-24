@@ -59,6 +59,21 @@ describe("processRun — happy path", () => {
   });
 });
 
+describe("processRun — missing workflow", () => {
+  it("throws when the run's workflow can no longer be loaded", async () => {
+    const recorder = new InMemoryRunRecorder();
+    const deps: ProcessRunDeps = {
+      recorder,
+      loadWorkflow: vi.fn(async () => null),
+      registry: createDefaultRegistry(),
+      llm,
+    };
+    const runId = await enqueue(recorder);
+
+    await expect(processRun(runId, deps)).rejects.toThrow(/Workflow wf not found/);
+  });
+});
+
 describe("processRun — idempotency", () => {
   it("does not re-execute a run that already succeeded", async () => {
     const { deps, recorder } = makeDeps(happyDefinition);

@@ -9,6 +9,8 @@ process.env.JWT_SECRET = "test-secret-do-not-use-in-production";
 process.env.JWT_EXPIRES_IN = "1h";
 process.env.CLIENT_URL = "http://localhost:5173";
 process.env.PORT = "0";
+// Fixed 32-byte (base64) key so credential encrypt/decrypt is deterministic in tests.
+process.env.CREDENTIALS_KEY = "Ov7Z9RtjhZKnmPXQRoSPCwtGeTK8ellFXcOQZzMu4oA=";
 // Keep the LLM layer offline & deterministic for the whole test run: the `none`
 // provider returns a fixed stub, so no Ollama/OpenAI service is ever contacted.
 process.env.LLM_PROVIDER = "none";

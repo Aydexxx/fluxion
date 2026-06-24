@@ -7,15 +7,14 @@ import { navigate } from "../lib/router";
 import { toast } from "../store/toasts";
 import { timeAgo } from "../lib/format";
 import { ConfirmDialog } from "../components/ConfirmDialog";
-import { GridIcon, Logo, LogoutIcon, PlusIcon, SpinnerIcon, TrashIcon } from "../components/icons";
+import { TopNav } from "../components/TopNav";
+import { GridIcon, Logo, PlusIcon, SpinnerIcon, TrashIcon } from "../components/icons";
 import { categoryAccent } from "../editor/nodeCatalog";
 import { riseIn, stagger, still } from "../lib/motion";
 
 export function DashboardPage() {
   const reduce = useReducedMotion();
-  const user = useAuth((s) => s.user);
   const workspace = useAuth((s) => s.workspace);
-  const logout = useAuth((s) => s.logout);
 
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
   const [creating, setCreating] = useState(false);
@@ -70,31 +69,7 @@ export function DashboardPage() {
     <div className="relative h-screen overflow-y-auto bg-base">
       <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 h-[420px] bloom opacity-80" />
 
-      <header className="sticky top-0 z-30 border-b border-white/8 bg-base/70 backdrop-blur-xl">
-        <div className="mx-auto flex h-14 max-w-6xl items-center justify-between px-6">
-          <div className="flex items-center gap-2.5">
-            <Logo className="text-[20px] text-accent" />
-            <span className="font-display text-[15px] font-semibold tracking-tight">Fluxion</span>
-            {workspace ? (
-              <>
-                <span className="mx-1 text-faint">/</span>
-                <span className="text-[13px] text-muted">{workspace.name}</span>
-              </>
-            ) : null}
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="hidden text-[13px] text-muted sm:block">{user?.name}</span>
-            <button
-              type="button"
-              onClick={logout}
-              aria-label="Sign out"
-              className="flex items-center gap-1.5 rounded-lg border border-white/8 px-2.5 py-1.5 text-[12.5px] text-muted transition-colors hover:border-white/14 hover:text-ink"
-            >
-              <LogoutIcon className="text-[15px]" /> Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <TopNav active="workflows" />
 
       <main className="relative mx-auto max-w-6xl px-6 pb-20 pt-10">
         <motion.div
