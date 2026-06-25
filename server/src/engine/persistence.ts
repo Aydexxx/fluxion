@@ -1,3 +1,5 @@
+import type { WorkflowDefinition } from "../dag/types";
+import type { RunLogEntry } from "./events";
 import type { ExecutionStatusValue, RunTriggerValue } from "./types";
 
 /** Serializable record of one node's execution within a run. */
@@ -8,6 +10,8 @@ export interface NodeExecutionRecord {
   input: unknown;
   output: unknown;
   error: string | null;
+  /** Number of attempts the engine made for this node (>=1). */
+  attempts: number;
   startedAt: string | null;
   finishedAt: string | null;
 }
@@ -23,6 +27,8 @@ export interface RunRecord {
   createdAt: string | null;
   startedAt: string | null;
   finishedAt: string | null;
+  /** The exact definition snapshotted for this run at enqueue time, if captured. */
+  definition: WorkflowDefinition | null;
   /** Origin run id when this run is a replay, else null. */
   replayOfId: string | null;
   nodeExecutions: NodeExecutionRecord[];
@@ -39,6 +45,8 @@ export interface RunRecorder {
     workflowId: string;
     trigger: RunTriggerValue;
     payload: unknown;
+    /** The definition this run will execute, snapshotted onto the run. */
+    definition?: WorkflowDefinition | null;
     /** Set when this run is a replay of an earlier run. */
     replayOfId?: string | null;
   }): Promise<string>;
@@ -53,9 +61,13 @@ export interface RunRecorder {
   createNodeExecution(data: { runId: string; nodeId: string; input: unknown }): Promise<string>;
   finishNodeExecution(
     id: string,
-    data: { status: ExecutionStatusValue; output?: unknown; error?: string | null },
+    data: { status: ExecutionStatusValue; output?: unknown; error?: string | null; attempts?: number },
   ): Promise<void>;
   finishRun(id: string, data: { status: ExecutionStatusValue; error?: string | null }): Promise<void>;
+  /** Append one structured log line for a run (correlation id = runId). */
+  appendRunLog(runId: string, entry: RunLogEntry): Promise<void>;
+  /** List a run's log lines in sequence order, optionally only those after `afterSeq`. */
+  listRunLogs(runId: string, afterSeq?: number): Promise<RunLogEntry[]>;
   getRun(id: string): Promise<RunRecord>;
 }
 
@@ -65,6 +77,7 @@ export interface RunRecorder {
  */
 export class InMemoryRunRecorder implements RunRecorder {
   private readonly runs = new Map<string, RunRecord>();
+  private readonly logs = new Map<string, RunLogEntry[]>();
   private seq = 0;
 
   private nextId(prefix: string): string {
@@ -76,6 +89,7 @@ export class InMemoryRunRecorder implements RunRecorder {
     workflowId: string;
     trigger: RunTriggerValue;
     payload: unknown;
+    definition?: WorkflowDefinition | null;
     replayOfId?: string | null;
   }): Promise<string> {
     const id = this.nextId("run");
@@ -89,6 +103,7 @@ export class InMemoryRunRecorder implements RunRecorder {
       createdAt: new Date().toISOString(),
       startedAt: null,
       finishedAt: null,
+      definition: data.definition ?? null,
       replayOfId: data.replayOfId ?? null,
       nodeExecutions: [],
     });
@@ -102,6 +117,7 @@ export class InMemoryRunRecorder implements RunRecorder {
     run.finishedAt = null;
     run.error = null;
     run.nodeExecutions = []; // fresh attempt
+    this.logs.set(runId, []); // logs reflect the current attempt only
   }
 
   async requeueRun(runId: string): Promise<void> {
@@ -121,6 +137,7 @@ export class InMemoryRunRecorder implements RunRecorder {
       input: data.input ?? null,
       output: null,
       error: null,
+      attempts: 1,
       startedAt: new Date().toISOString(),
       finishedAt: null,
     });
@@ -129,7 +146,7 @@ export class InMemoryRunRecorder implements RunRecorder {
 
   async finishNodeExecution(
     id: string,
-    data: { status: ExecutionStatusValue; output?: unknown; error?: string | null },
+    data: { status: ExecutionStatusValue; output?: unknown; error?: string | null; attempts?: number },
   ): Promise<void> {
     for (const run of this.runs.values()) {
       const node = run.nodeExecutions.find((n) => n.id === id);
@@ -137,11 +154,22 @@ export class InMemoryRunRecorder implements RunRecorder {
         node.status = data.status;
         node.output = data.output ?? null;
         node.error = data.error ?? null;
+        if (data.attempts !== undefined) node.attempts = data.attempts;
         node.finishedAt = new Date().toISOString();
         return;
       }
     }
     throw new Error(`Unknown node execution: ${id}`);
+  }
+
+  async appendRunLog(runId: string, entry: RunLogEntry): Promise<void> {
+    const list = this.logs.get(runId) ?? [];
+    list.push(entry);
+    this.logs.set(runId, list);
+  }
+
+  async listRunLogs(runId: string, afterSeq = 0): Promise<RunLogEntry[]> {
+    return (this.logs.get(runId) ?? []).filter((e) => e.seq > afterSeq).map((e) => ({ ...e }));
   }
 
   async finishRun(id: string, data: { status: ExecutionStatusValue; error?: string | null }): Promise<void> {

@@ -6,9 +6,11 @@ import type { WorkflowSummary } from "../lib/types";
 import { navigate } from "../lib/router";
 import { useToast } from "../components/ui/toast";
 import { confirm } from "../components/ui/confirm";
+import { CardSkeletonGrid, EmptyState as EmptyStateUI, ErrorState } from "../components/ui/states";
+import { Badge } from "../components/ui/Badge";
 import { timeAgo } from "../lib/format";
 import { TopNav } from "../components/TopNav";
-import { GridIcon, Logo, PlusIcon, SpinnerIcon, TrashIcon } from "../components/icons";
+import { GridIcon, Logo, PlusIcon, SparkIcon, SpinnerIcon, TrashIcon } from "../components/icons";
 import { categoryAccent } from "../editor/nodeCatalog";
 import { riseIn, stagger, still } from "../lib/motion";
 
@@ -18,24 +20,28 @@ export function DashboardPage() {
   const workspace = useAuth((s) => s.workspace);
 
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  // Bumped to force a refetch (used by the error-state retry).
+  const [reloadToken, setReloadToken] = useState(0);
 
   useEffect(() => {
     if (!workspace) return;
     let alive = true;
-    workflowApi
-      .list(workspace.id)
-      .then((list) => alive && setWorkflows(list))
-      .catch((err) => {
-        if (alive) {
-          setWorkflows([]);
-          toast.error(errorMessage(err, "Could not load workflows"));
-        }
-      });
+    void (async () => {
+      setWorkflows(null);
+      setError(null);
+      try {
+        const list = await workflowApi.list(workspace.id);
+        if (alive) setWorkflows(list);
+      } catch (err) {
+        if (alive) setError(errorMessage(err, "Could not load workflows"));
+      }
+    })();
     return () => {
       alive = false;
     };
-  }, [workspace, toast]);
+  }, [workspace, reloadToken]);
 
   const createWorkflow = async () => {
     if (!workspace || creating) return;
@@ -88,26 +94,38 @@ export function DashboardPage() {
             <h1 className="font-display text-[28px] font-semibold tracking-tight text-gradient">Workflows</h1>
             <p className="mt-1 text-sm text-muted">Design, automate, and orchestrate your pipelines.</p>
           </div>
-          <button
-            type="button"
-            onClick={createWorkflow}
-            disabled={creating || !workspace}
-            className="flex shrink-0 items-center gap-2 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold text-white transition-all disabled:opacity-70"
-            style={{
-              background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
-              boxShadow: "0 12px 34px -12px color-mix(in oklab, var(--color-accent) 75%, transparent)",
-            }}
-          >
-            {creating ? <SpinnerIcon className="animate-spin text-[16px]" /> : <PlusIcon className="text-[16px]" />}
-            New workflow
-          </button>
+          <div className="flex shrink-0 items-center gap-2.5">
+            <button
+              type="button"
+              onClick={() => navigate("/templates")}
+              className="flex items-center gap-2 rounded-xl border border-white/10 px-3.5 py-2.5 text-[13.5px] font-semibold text-ink transition-colors hover:bg-white/5"
+            >
+              <SparkIcon className="text-[16px] text-accent-bright" />
+              Templates
+            </button>
+            <button
+              type="button"
+              onClick={createWorkflow}
+              disabled={creating || !workspace}
+              className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold text-white transition-all disabled:opacity-70"
+              style={{
+                background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
+                boxShadow: "0 12px 34px -12px color-mix(in oklab, var(--color-accent) 75%, transparent)",
+              }}
+            >
+              {creating ? <SpinnerIcon className="animate-spin text-[16px]" /> : <PlusIcon className="text-[16px]" />}
+              New workflow
+            </button>
+          </div>
         </motion.div>
 
         <div className="mt-8">
-          {workflows === null ? (
-            <SkeletonGrid />
+          {error ? (
+            <ErrorState title="Couldn’t load workflows" message={error} onRetry={() => setReloadToken((t) => t + 1)} />
+          ) : workflows === null ? (
+            <CardSkeletonGrid count={6} />
           ) : workflows.length === 0 ? (
-            <EmptyState onCreate={createWorkflow} creating={creating} />
+            <EmptyWorkflows onCreate={createWorkflow} creating={creating} />
           ) : (
             <motion.div
               variants={reduce ? still : stagger(0.04, 0.05)}
@@ -203,56 +221,45 @@ function WorkflowCard({
 }
 
 function StatusPill({ active }: { active: boolean }) {
-  const color = active ? "#34d0a8" : "#6b6b78";
   return (
-    <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
-      style={{ color, background: `color-mix(in oklab, ${color} 12%, transparent)` }}
-    >
-      <span className="size-1.5 rounded-full" style={{ background: color, boxShadow: active ? `0 0 8px ${color}` : "none" }} />
+    <Badge color={active ? "#34d0a8" : "#6b6b78"} glow={active}>
       {active ? "Active" : "Inactive"}
-    </span>
+    </Badge>
   );
 }
 
-function EmptyState({ onCreate, creating }: { onCreate: () => void; creating: boolean }) {
+function EmptyWorkflows({ onCreate, creating }: { onCreate: () => void; creating: boolean }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="relative flex flex-col items-center justify-center rounded-3xl border border-dashed border-white/10 px-6 py-20 text-center"
-    >
-      <div className="accent-ring mb-5 flex size-14 items-center justify-center rounded-2xl bg-surface text-[26px] text-accent">
-        <Logo />
-      </div>
-      <h2 className="font-display text-xl font-semibold text-ink">Build your first workflow</h2>
-      <p className="mt-2 max-w-sm text-sm text-muted">
-        Drag triggers, actions, and AI models onto a cinematic canvas and wire them into something that runs itself.
-      </p>
-      <button
-        type="button"
-        onClick={onCreate}
-        disabled={creating}
-        className="mt-6 flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold text-white transition-all disabled:opacity-70"
-        style={{
-          background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
-          boxShadow: "0 12px 34px -12px color-mix(in oklab, var(--color-accent) 75%, transparent)",
-        }}
-      >
-        {creating ? <SpinnerIcon className="animate-spin text-[16px]" /> : <PlusIcon className="text-[16px]" />}
-        New workflow
-      </button>
-    </motion.div>
-  );
-}
-
-function SkeletonGrid() {
-  return (
-    <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
-      {Array.from({ length: 6 }).map((_, i) => (
-        <div key={i} className="h-[168px] animate-pulse rounded-2xl border border-white/6 bg-surface/40" />
-      ))}
-    </div>
+    <EmptyStateUI
+      icon={<Logo />}
+      title="Build your first workflow"
+      description="Start from a working template with sample data baked in, or open a blank canvas and wire triggers, actions, and AI models into something that runs itself."
+      action={
+        <button
+          type="button"
+          onClick={() => navigate("/templates")}
+          className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold text-white transition-all"
+          style={{
+            background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
+            boxShadow: "0 12px 34px -12px color-mix(in oklab, var(--color-accent) 75%, transparent)",
+          }}
+        >
+          <SparkIcon className="text-[16px]" />
+          Start from template
+        </button>
+      }
+      secondaryAction={
+        <button
+          type="button"
+          onClick={onCreate}
+          disabled={creating}
+          className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-[13.5px] font-semibold text-ink transition-colors hover:bg-white/5 disabled:opacity-70"
+        >
+          {creating ? <SpinnerIcon className="animate-spin text-[16px]" /> : <PlusIcon className="text-[16px]" />}
+          Start blank
+        </button>
+      }
+    />
   );
 }
 

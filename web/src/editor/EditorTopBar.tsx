@@ -1,8 +1,22 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { useEditor } from "./editorStore";
+import { PresenceAvatars } from "./PresenceAvatars";
 import { navigate } from "../lib/router";
 import { useToast } from "../components/ui/toast";
-import { ChevronRightIcon, HistoryIcon, Logo, PlayIcon, SaveIcon, SearchIcon, SpinnerIcon } from "../components/icons";
+import {
+  AlertIcon,
+  ChevronRightIcon,
+  CloseIcon,
+  HistoryIcon,
+  LayersIcon,
+  Logo,
+  PlayIcon,
+  RotateIcon,
+  SaveIcon,
+  SearchIcon,
+  SpinnerIcon,
+  UploadIcon,
+} from "../components/icons";
 
 export function EditorTopBar() {
   const reduce = useReducedMotion();
@@ -18,6 +32,10 @@ export function EditorTopBar() {
   const run = useEditor((s) => s.run);
   const setHistoryOpen = useEditor((s) => s.setHistoryOpen);
   const setCommandPaletteOpen = useEditor((s) => s.setCommandPaletteOpen);
+  const previewVersion = useEditor((s) => s.previewVersion);
+
+  // While previewing a past version the editor is read-only; show a focused banner instead.
+  if (previewVersion) return <PreviewBanner />;
 
   const handleRun = async () => {
     const id = toast.loading("Starting run…");
@@ -42,6 +60,17 @@ export function EditorTopBar() {
     for (const w of warnings.slice(0, 2)) toast.info(w);
   };
 
+  const handlePublish = async () => {
+    const id = toast.loading("Publishing…");
+    const res = await useEditor.getState().publish();
+    if (!res.ok) {
+      toast.update(id, { kind: "error", message: res.message ?? "Could not publish" });
+      return;
+    }
+    const version = useEditor.getState().publishedVersion;
+    toast.update(id, { kind: "success", message: version ? `Published v${version} — now live` : "Published — now live" });
+  };
+
   // Save / undo / redo / palette shortcuts are owned by useEditorShortcuts.
 
   return (
@@ -62,10 +91,13 @@ export function EditorTopBar() {
           onChange={(e) => setName(e.target.value)}
           spellCheck={false}
           placeholder="Untitled workflow"
-          className="min-w-0 max-w-[420px] flex-1 truncate rounded-md bg-transparent px-1.5 py-1 font-display text-[15px] font-semibold text-ink outline-none transition-colors hover:bg-white/[0.03] focus:bg-white/5 placeholder:text-faint"
+          className="min-w-0 max-w-[360px] flex-1 truncate rounded-md bg-transparent px-1.5 py-1 font-display text-[15px] font-semibold text-ink outline-none transition-colors hover:bg-white/[0.03] focus:bg-white/5 placeholder:text-faint"
         />
         <SaveState dirty={dirty} saving={saving} />
+        <PublishBadge />
       </div>
+
+      <PresenceAvatars />
 
       <ActiveToggle active={isActive} onToggle={() => setActive(!isActive)} reduce={!!reduce} />
 
@@ -82,11 +114,22 @@ export function EditorTopBar() {
 
       <button
         type="button"
+        onClick={() => useEditor.getState().setVersionHistoryOpen(true)}
+        aria-label="Version history"
+        className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink"
+      >
+        <LayersIcon className="text-[14px]" /> Versions
+      </button>
+
+      <FailureAlertButton />
+
+      <button
+        type="button"
         onClick={() => setHistoryOpen(true)}
         aria-label="Run history"
         className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink"
       >
-        <HistoryIcon className="text-[14px]" /> History
+        <HistoryIcon className="text-[14px]" /> Runs
       </button>
 
       <button
@@ -103,14 +146,136 @@ export function EditorTopBar() {
         type="button"
         onClick={handleSave}
         disabled={saving}
-        className="flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold text-white transition-all disabled:opacity-70"
-        style={{
-          background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
-          boxShadow: "0 6px 20px -6px color-mix(in oklab, var(--color-accent) 70%, transparent)",
-        }}
+        className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink disabled:opacity-70"
       >
-        {saving ? <SpinnerIcon className="animate-spin text-[14px]" /> : <SaveIcon className="text-[14px]" />}
+        {saving ? <SpinnerIcon className="animate-spin text-[13px]" /> : <SaveIcon className="text-[13px]" />}
         {saving ? "Saving" : "Save"}
+      </button>
+
+      <PublishButton onPublish={handlePublish} />
+    </header>
+  );
+}
+
+/** Primary action: promote the saved draft to the live published version. */
+function PublishButton({ onPublish }: { onPublish: () => void }) {
+  const publishing = useEditor((s) => s.publishing);
+  const hasUnpublishedChanges = useEditor((s) => s.hasUnpublishedChanges);
+  const dirty = useEditor((s) => s.dirty);
+  const publishedVersion = useEditor((s) => s.publishedVersion);
+  // There's something to publish if the draft is unsaved, or differs from published.
+  const canPublish = dirty || hasUnpublishedChanges || publishedVersion === null;
+
+  return (
+    <button
+      type="button"
+      onClick={onPublish}
+      disabled={publishing || !canPublish}
+      title={canPublish ? "Promote this draft to the live version" : "Nothing new to publish"}
+      className="flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-50"
+      style={{
+        background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
+        boxShadow: "0 6px 20px -6px color-mix(in oklab, var(--color-accent) 70%, transparent)",
+      }}
+    >
+      {publishing ? <SpinnerIcon className="animate-spin text-[14px]" /> : <UploadIcon className="text-[14px]" />}
+      {publishing ? "Publishing" : "Publish"}
+    </button>
+  );
+}
+
+/** Opens the failure-alert config; lit when an alert is configured. */
+function FailureAlertButton() {
+  const failureNotify = useEditor((s) => s.failureNotify);
+  const setOpen = useEditor((s) => s.setFailureAlertOpen);
+  const on = failureNotify !== null;
+  return (
+    <button
+      type="button"
+      onClick={() => setOpen(true)}
+      aria-label="Failure alert"
+      title={on ? `Failure alert: ${failureNotify.channel}` : "Configure a failure alert"}
+      className="relative flex items-center justify-center rounded-lg border px-2.5 py-1.5 text-[13px] font-medium transition-colors"
+      style={{
+        borderColor: on ? "color-mix(in oklab, #e0a33e 45%, transparent)" : "color-mix(in oklab, white 8%, transparent)",
+        color: on ? "#e0a33e" : "var(--color-muted)",
+        background: on ? "color-mix(in oklab, #e0a33e 10%, transparent)" : "transparent",
+      }}
+    >
+      <AlertIcon className="text-[15px]" />
+    </button>
+  );
+}
+
+/** Shows whether the live version is up to date with the draft. */
+function PublishBadge() {
+  const hasUnpublishedChanges = useEditor((s) => s.hasUnpublishedChanges);
+  const publishedVersion = useEditor((s) => s.publishedVersion);
+  const dirty = useEditor((s) => s.dirty);
+
+  const unpublished = hasUnpublishedChanges || dirty || publishedVersion === null;
+  const color = unpublished ? "#e0a33e" : "#34d0a8";
+  const label =
+    publishedVersion === null
+      ? "Not published"
+      : unpublished
+        ? `Unpublished changes · live v${publishedVersion}`
+        : `Published · v${publishedVersion}`;
+
+  return (
+    <span
+      className="hidden items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium md:inline-flex"
+      style={{ color, background: `color-mix(in oklab, ${color} 12%, transparent)` }}
+      title={label}
+    >
+      <span className="size-1.5 rounded-full" style={{ background: color }} />
+      {label}
+    </span>
+  );
+}
+
+/** Replaces the whole top bar while a past version is open read-only. */
+function PreviewBanner() {
+  const toast = useToast();
+  const previewVersion = useEditor((s) => s.previewVersion);
+  const exitPreview = useEditor((s) => s.exitPreview);
+  const rollbackTo = useEditor((s) => s.rollbackTo);
+  if (!previewVersion) return null;
+
+  const restore = async () => {
+    const id = toast.loading("Restoring version…");
+    const res = await rollbackTo(previewVersion.id);
+    toast.update(id, res.ok ? { kind: "success", message: `Restored v${previewVersion.version}` } : { kind: "error", message: res.message ?? "Could not restore" });
+  };
+
+  return (
+    <header
+      className="relative z-30 flex h-14 shrink-0 items-center gap-3 border-b px-4 backdrop-blur-xl"
+      style={{ borderColor: "color-mix(in oklab, #e0a33e 40%, transparent)", background: "color-mix(in oklab, #e0a33e 8%, var(--color-surface))" }}
+    >
+      <LayersIcon className="text-[17px]" style={{ color: "#e0a33e" }} />
+      <div className="min-w-0 flex-1">
+        <span className="text-[13.5px] font-semibold text-ink">
+          Viewing version {previewVersion.version}
+          {previewVersion.isCurrent ? " (current)" : ""}
+        </span>
+        <span className="ml-2 text-[12px] text-muted">Read-only · {previewVersion.note ?? "snapshot"}</span>
+      </div>
+      <button
+        type="button"
+        onClick={restore}
+        disabled={previewVersion.isCurrent}
+        className="flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-[13px] font-semibold text-white transition-all disabled:opacity-50"
+        style={{ background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))" }}
+      >
+        <RotateIcon className="text-[14px]" /> Restore this version
+      </button>
+      <button
+        type="button"
+        onClick={exitPreview}
+        className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:text-ink"
+      >
+        <CloseIcon className="text-[13px]" /> Exit
       </button>
     </header>
   );

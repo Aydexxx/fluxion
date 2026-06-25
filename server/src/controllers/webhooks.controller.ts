@@ -13,7 +13,7 @@ import { enqueueRunForWorkflow } from "../services/runs";
 export async function handleWebhook(req: Request<{ token: string }>, res: Response): Promise<void> {
   const workflow = await prisma.workflow.findUnique({
     where: { webhookToken: req.params.token },
-    select: { id: true, isActive: true },
+    select: { id: true, isActive: true, publishedDefinition: true },
   });
 
   if (!workflow) {
@@ -23,6 +23,13 @@ export async function handleWebhook(req: Request<{ token: string }>, res: Respon
 
   if (!workflow.isActive) {
     res.status(200).json({ accepted: false, reason: "workflow_inactive" });
+    return;
+  }
+
+  // Webhooks run the published version; a workflow that's never been published
+  // (or only has draft edits) has nothing to run, so we accept-but-don't-fire.
+  if (workflow.publishedDefinition == null) {
+    res.status(200).json({ accepted: false, reason: "workflow_unpublished" });
     return;
   }
 

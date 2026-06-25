@@ -3,8 +3,12 @@ import {
   createWorkflow,
   deleteWorkflow,
   getWorkflow,
+  getWorkflowVersion,
   listWorkflowRuns,
+  listWorkflowVersions,
   listWorkflows,
+  publishWorkflow,
+  rollbackWorkflow,
   runWorkflow,
   testWorkflowNodeController,
   updateWorkflow,
@@ -14,6 +18,7 @@ import { validateBody, validateQuery } from "../middleware/validate";
 import {
   createWorkflowSchema,
   listWorkflowsQuerySchema,
+  publishWorkflowSchema,
   runWorkflowSchema,
   testNodeSchema,
   updateWorkflowSchema,
@@ -26,6 +31,10 @@ router.get("/", requireAuth, validateQuery(listWorkflowsQuerySchema), listWorkfl
 router.get("/:id", requireAuth, getWorkflow);
 router.put("/:id", requireAuth, validateBody(updateWorkflowSchema), updateWorkflow);
 router.delete("/:id", requireAuth, deleteWorkflow);
+router.post("/:id/publish", requireAuth, validateBody(publishWorkflowSchema), publishWorkflow);
+router.get("/:id/versions", requireAuth, listWorkflowVersions);
+router.get("/:id/versions/:versionId", requireAuth, getWorkflowVersion);
+router.post("/:id/versions/:versionId/rollback", requireAuth, rollbackWorkflow);
 router.post("/:id/run", requireAuth, validateBody(runWorkflowSchema), runWorkflow);
 router.get("/:id/runs", requireAuth, listWorkflowRuns);
 router.post("/:id/nodes/:nodeId/test", requireAuth, validateBody(testNodeSchema), testWorkflowNodeController);

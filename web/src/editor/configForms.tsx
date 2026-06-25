@@ -566,6 +566,84 @@ function ResponseForm({ nodeId, config, onChange }: ConfigFormProps) {
   );
 }
 
+/* ── shared error handling (on-error policy + per-node retry) ────────────── */
+interface RetryConfig {
+  maxAttempts?: number;
+  backoffMs?: number;
+}
+
+function readRetry(config: Record<string, unknown>): { maxAttempts: number; backoffMs: number } {
+  const retry = (config.retry ?? {}) as RetryConfig;
+  const maxAttempts = typeof retry.maxAttempts === "number" ? retry.maxAttempts : 1;
+  const backoffMs = typeof retry.backoffMs === "number" ? retry.backoffMs : 0;
+  return { maxAttempts: Math.max(1, Math.min(10, maxAttempts)), backoffMs: Math.max(0, backoffMs) };
+}
+
+/**
+ * On-error policy + per-node retry, shared by every executable node. `canRoute`
+ * is false for nodes with no output handle (e.g. Response), where "route to
+ * error path" has nowhere to go.
+ */
+export function ErrorHandlingForm({
+  config,
+  onChange,
+  canRoute,
+}: {
+  config: Record<string, unknown>;
+  onChange: (next: Record<string, unknown>) => void;
+  canRoute: boolean;
+}) {
+  const onError = config.onError === "continue" || config.onError === "route" ? (config.onError as string) : "stop";
+  const { maxAttempts, backoffMs } = readRetry(config);
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const setRetry = (patch: Partial<{ maxAttempts: number; backoffMs: number }>) =>
+    set({ retry: { maxAttempts, backoffMs, ...patch } });
+
+  return (
+    <div className="space-y-4">
+      <FieldShell label="On error" hint="What happens if this node fails after its retries are used up.">
+        <Select value={onError} onChange={(e) => set({ onError: e.target.value })}>
+          <option value="stop">Stop the run (default)</option>
+          <option value="continue">Continue — skip & proceed</option>
+          {canRoute ? <option value="route">Route to error path</option> : null}
+        </Select>
+      </FieldShell>
+
+      {onError === "route" && canRoute ? (
+        <p className="-mt-1 text-[11.5px] leading-relaxed text-faint">
+          On failure, only edges from this node’s <span className="text-cat-logic">error</span> handle run, carrying{" "}
+          <span className="font-mono text-[11px]">{"{{ error }}"}</span> — a try/catch branch.
+        </p>
+      ) : null}
+
+      <div className="grid grid-cols-2 gap-2">
+        <FieldShell label="Retry attempts" hint="Total tries within one run (1 = no retry).">
+          <TextInput
+            type="number"
+            min={1}
+            max={10}
+            value={String(maxAttempts)}
+            onChange={(e) => setRetry({ maxAttempts: Math.max(1, Math.min(10, Number(e.target.value) || 1)) })}
+          />
+        </FieldShell>
+        <FieldShell label="Backoff (ms)" hint="Wait between attempts.">
+          <TextInput
+            type="number"
+            min={0}
+            step={250}
+            disabled={maxAttempts <= 1}
+            value={String(backoffMs)}
+            onChange={(e) => setRetry({ backoffMs: Math.max(0, Number(e.target.value) || 0) })}
+          />
+        </FieldShell>
+      </div>
+      <p className="-mt-1 text-[11.5px] leading-relaxed text-faint">
+        Overrides the global queue retry for this node — a transient failure retries here, in place.
+      </p>
+    </div>
+  );
+}
+
 const FORMS: Record<string, ComponentType<ConfigFormProps>> = {
   "trigger.manual": ManualTriggerForm,
   "trigger.webhook": WebhookForm,

@@ -34,7 +34,8 @@ export async function testWorkflowNode(
 
   const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
   if (!workflow) throw new NotFoundError("Workflow not found");
-  const definition = workflow.definition as unknown as WorkflowDefinition;
+  // Single-node tests exercise what you're editing, so they run against the draft.
+  const definition = workflow.draftDefinition as unknown as WorkflowDefinition;
 
   try {
     return await runSingleNode({

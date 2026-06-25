@@ -378,6 +378,33 @@ export function ChartIcon(props: IconProps) {
   );
 }
 
+export function LayersIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" />
+      <path d="M3 12l9 4.5L21 12M3 16.5 12 21l9-4.5" />
+    </Svg>
+  );
+}
+
+export function UploadIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 16V4M8 8l4-4 4 4" />
+      <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+    </Svg>
+  );
+}
+
+export function RotateIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 12a9 9 0 1 0 2.6-6.4L3 8" />
+      <path d="M3 3v5h5" />
+    </Svg>
+  );
+}
+
 export function KeyIcon(props: IconProps) {
   return (
     <Svg {...props}>

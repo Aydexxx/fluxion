@@ -64,7 +64,8 @@ async function drainRun(runId: string) {
     recorder: new PrismaRunRecorder(prisma),
     loadWorkflow: async (workflowId) => {
       const wf = await prisma.workflow.findUnique({ where: { id: workflowId } });
-      return wf ? { definition: wf.definition as unknown as WorkflowDefinition, workspaceId: wf.workspaceId } : null;
+      // Fallback only — processRun prefers the run's own snapshot. Manual runs snapshot the draft.
+      return wf ? { definition: wf.draftDefinition as unknown as WorkflowDefinition, workspaceId: wf.workspaceId } : null;
     },
     registry: createDefaultRegistry(),
     llm: env.llm,

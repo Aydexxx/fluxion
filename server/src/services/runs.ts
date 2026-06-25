@@ -3,34 +3,50 @@ import { validateDefinition } from "../dag/validateDefinition";
 import { NotFoundError, ValidationError } from "../errors/HttpError";
 import { PrismaRunRecorder } from "../engine/prismaRecorder";
 import type { RunRecord } from "../engine/persistence";
-import type { WorkflowRun as PrismaWorkflowRun } from "../generated/prisma/client";
+import type { RunLogEntry } from "../engine/events";
+import type { Prisma, WorkflowRun as PrismaWorkflowRun } from "../generated/prisma/client";
 import type { ExecutionStatusValue, RunTriggerValue } from "../engine/types";
 import { enqueueWorkflowRun } from "../queue/workflowQueue";
 import { prisma } from "./prisma";
+import { resolveRunnableDefinition } from "./workflows";
 import { requireWorkspaceMember, requireWorkspaceRole, resolveWorkflowWorkspaceId } from "./authorization";
 
 /**
- * Trigger-agnostic core: validates the saved definition, creates a `queued`
- * WorkflowRun, and enqueues it for the worker. Used by every trigger source
- * (manual, webhook, schedule). Returns the queued run.
+ * Trigger-agnostic core: resolves the definition this trigger should run
+ * (manual → draft, webhook/schedule → published), validates it, creates a
+ * `queued` WorkflowRun with that exact definition snapshotted onto it, and
+ * enqueues it. Snapshotting means later draft edits can never alter an
+ * already-queued or in-flight run. Returns the queued run.
+ *
+ * `options.definition` overrides the resolution (used by replay to re-execute a
+ * past run's exact captured definition).
  */
 export async function enqueueRunForWorkflow(
   workflowId: string,
   trigger: RunTriggerValue,
   payload: unknown,
-  options: { replayOfId?: string } = {},
+  options: { replayOfId?: string; definition?: WorkflowDefinition } = {},
 ): Promise<RunRecord> {
-  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
+  const workflow = await prisma.workflow.findUnique({
+    where: { id: workflowId },
+    select: { id: true, draftDefinition: true, publishedDefinition: true },
+  });
   if (!workflow) throw new NotFoundError("Workflow not found");
 
-  const definition = workflow.definition as unknown as WorkflowDefinition;
+  const definition = options.definition ?? resolveRunnableDefinition(workflow, trigger);
   const validation = validateDefinition(definition);
   if (!validation.valid) {
     throw new ValidationError(`Workflow cannot run: ${validation.errors.join("; ")}`);
   }
 
   const recorder = new PrismaRunRecorder(prisma);
-  const runId = await recorder.enqueueRun({ workflowId, trigger, payload, replayOfId: options.replayOfId ?? null });
+  const runId = await recorder.enqueueRun({
+    workflowId,
+    trigger,
+    payload,
+    definition,
+    replayOfId: options.replayOfId ?? null,
+  });
   await enqueueWorkflowRun({ runId, workflowId, payload });
 
   return recorder.getRun(runId);
@@ -44,15 +60,20 @@ export async function enqueueRunForWorkflow(
 export async function replayRun(runId: string, userId: string): Promise<RunRecord> {
   const origin = await prisma.workflowRun.findUnique({
     where: { id: runId },
-    select: { id: true, workflowId: true, trigger: true, payload: true },
+    select: { id: true, workflowId: true, trigger: true, payload: true, definition: true },
   });
   if (!origin) throw new NotFoundError("Run not found");
 
   const workspaceId = await resolveWorkflowWorkspaceId(origin.workflowId);
   await requireWorkspaceRole(workspaceId, userId, "member");
 
+  // A true replay re-runs the *exact* definition the origin executed (its
+  // snapshot), not whatever the draft/published happens to be now. Older runs
+  // without a snapshot fall back to trigger-based resolution.
+  const definition = origin.definition == null ? undefined : (origin.definition as unknown as WorkflowDefinition);
   return enqueueRunForWorkflow(origin.workflowId, origin.trigger as RunTriggerValue, origin.payload, {
     replayOfId: origin.id,
+    definition,
   });
 }
 
@@ -99,51 +120,138 @@ export interface WorkspaceRunSummary extends RunSummaryRecord {
   workflowName: string;
   createdAt: string | null;
   replayOfId: string | null;
+  /** For a failed run, the id of the node that failed (the dead-letter culprit). Null otherwise. */
+  failingNode: string | null;
 }
 
 export interface ListWorkspaceRunsFilters {
   status?: ExecutionStatusValue;
   workflowId?: string;
+  trigger?: RunTriggerValue;
+  /** Free-text match against workflow name or run id. */
+  search?: string;
   /** ISO timestamps bounding `createdAt`. */
   from?: string;
   to?: string;
+  /** Opaque keyset cursor (from a previous page's `nextCursor`). */
+  cursor?: string;
   limit?: number;
+}
+
+/** One page of workspace runs plus the cursor to fetch the next, for infinite scroll. */
+export interface WorkspaceRunsPage {
+  runs: WorkspaceRunSummary[];
+  /** Pass back as `cursor` to fetch the next page; null when there are no more. */
+  nextCursor: string | null;
+}
+
+const DEFAULT_PAGE_SIZE = 25;
+const MAX_PAGE_SIZE = 100;
+
+/** Encodes a run's (createdAt, id) as an opaque, URL-safe keyset cursor. */
+function encodeCursor(createdAt: Date, id: string): string {
+  return Buffer.from(`${createdAt.toISOString()}|${id}`, "utf8").toString("base64url");
+}
+
+function decodeCursor(cursor: string): { createdAt: Date; id: string } | null {
+  try {
+    const [iso, id] = Buffer.from(cursor, "base64url").toString("utf8").split("|");
+    const createdAt = new Date(iso);
+    if (!id || Number.isNaN(createdAt.getTime())) return null;
+    return { createdAt, id };
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Lists runs across every workflow in a workspace, newest first, with optional
- * status / workflow / date-range filters. Authorizes the caller as a member.
+ * status / workflow / trigger / date-range filters and free-text search.
+ * Paginates by keyset on (createdAt, id) for stable infinite scroll. Authorizes
+ * the caller as a member.
  */
 export async function listWorkspaceRuns(
   workspaceId: string,
   userId: string,
   filters: ListWorkspaceRunsFilters = {},
-): Promise<WorkspaceRunSummary[]> {
+): Promise<WorkspaceRunsPage> {
   await requireWorkspaceMember(workspaceId, userId);
 
-  const createdAt =
-    filters.from || filters.to
-      ? { gte: filters.from ? new Date(filters.from) : undefined, lte: filters.to ? new Date(filters.to) : undefined }
-      : undefined;
+  const take = Math.min(filters.limit ?? DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE);
+
+  // AND together the independent predicates so each can carry its own OR group
+  // (a single top-level OR would otherwise be overwritten by the next).
+  const and: Prisma.WorkflowRunWhereInput[] = [];
+  if (filters.from || filters.to) {
+    and.push({
+      createdAt: {
+        gte: filters.from ? new Date(filters.from) : undefined,
+        lte: filters.to ? new Date(filters.to) : undefined,
+      },
+    });
+  }
+  if (filters.search) {
+    and.push({
+      OR: [
+        { id: { contains: filters.search, mode: "insensitive" } },
+        { workflow: { name: { contains: filters.search, mode: "insensitive" } } },
+      ],
+    });
+  }
+  // Keyset: rows strictly "after" the cursor in (createdAt desc, id desc) order.
+  const cursor = filters.cursor ? decodeCursor(filters.cursor) : null;
+  if (cursor) {
+    and.push({
+      OR: [
+        { createdAt: { lt: cursor.createdAt } },
+        { AND: [{ createdAt: cursor.createdAt }, { id: { lt: cursor.id } }] },
+      ],
+    });
+  }
 
   const runs = await prisma.workflowRun.findMany({
     where: {
       workflow: { workspaceId },
       status: filters.status,
       workflowId: filters.workflowId,
-      createdAt,
+      trigger: filters.trigger,
+      ...(and.length ? { AND: and } : {}),
     },
-    include: { workflow: { select: { name: true } } },
-    orderBy: { createdAt: "desc" },
-    take: Math.min(filters.limit ?? 100, 500),
+    include: {
+      workflow: { select: { name: true } },
+      // The first failed node identifies the dead-letter culprit for failed runs.
+      nodeExecutions: { where: { status: "failed" }, orderBy: { finishedAt: "asc" }, take: 1, select: { nodeId: true } },
+    },
+    orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+    take: take + 1, // one extra row tells us whether another page exists
   });
 
-  return runs.map((run) => ({
-    ...toSummary(run),
-    workflowName: run.workflow.name,
-    createdAt: run.createdAt?.toISOString() ?? null,
-    replayOfId: run.replayOfId ?? null,
-  }));
+  const hasMore = runs.length > take;
+  const page = hasMore ? runs.slice(0, take) : runs;
+  const last = page[page.length - 1];
+  const nextCursor = hasMore && last?.createdAt ? encodeCursor(last.createdAt, last.id) : null;
+
+  return {
+    runs: page.map((run) => ({
+      ...toSummary(run),
+      workflowName: run.workflow.name,
+      createdAt: run.createdAt?.toISOString() ?? null,
+      replayOfId: run.replayOfId ?? null,
+      failingNode: run.nodeExecutions[0]?.nodeId ?? null,
+    })),
+    nextCursor,
+  };
+}
+
+/** Retrieves a run's structured logs (optionally only those after `afterSeq`), authorizing via the run's workspace. */
+export async function getRunLogs(runId: string, userId: string, afterSeq?: number): Promise<RunLogEntry[]> {
+  const run = await prisma.workflowRun.findUnique({ where: { id: runId }, select: { workflowId: true } });
+  if (!run) throw new NotFoundError("Run not found");
+
+  const workspaceId = await resolveWorkflowWorkspaceId(run.workflowId);
+  await requireWorkspaceMember(workspaceId, userId);
+
+  return new PrismaRunRecorder(prisma).listRunLogs(runId, afterSeq);
 }
 
 /** Lists a workflow's past runs, most recent first. Any workspace member may view history. */

@@ -4,15 +4,21 @@ import type {
   AuthResponse,
   Credential,
   CredentialTypeSpec,
+  FailureNotifyConfig,
   NodeTestResult,
+  PublishResponse,
   RunFilters,
+  RunLogEntry,
   RunSummary,
+  TemplateSummary,
   UpdateWorkflowResponse,
   Workflow,
   WorkflowDefinition,
   WorkflowRun,
   WorkflowSummary,
-  WorkspaceRunSummary,
+  WorkflowVersionDetail,
+  WorkflowVersionSummary,
+  WorkspaceRunsPage,
   Workspace,
 } from "./types";
 
@@ -97,13 +103,39 @@ export const workflowApi = {
   },
   async update(
     id: string,
-    patch: { name?: string; description?: string | null; isActive?: boolean; definition?: WorkflowDefinition },
+    patch: {
+      name?: string;
+      description?: string | null;
+      isActive?: boolean;
+      definition?: WorkflowDefinition;
+      failureNotify?: FailureNotifyConfig | null;
+    },
   ): Promise<UpdateWorkflowResponse> {
     const { data } = await api.put<UpdateWorkflowResponse>(`/workflows/${id}`, patch);
     return data;
   },
   async remove(id: string): Promise<void> {
     await api.delete(`/workflows/${id}`);
+  },
+  /** Promote the current draft to published, snapshotting a new version. */
+  async publish(id: string, note?: string): Promise<PublishResponse> {
+    const { data } = await api.post<PublishResponse>(`/workflows/${id}/publish`, note ? { note } : {});
+    return data;
+  },
+  /** Roll back to a past version (re-publishes it as a new version). */
+  async rollback(id: string, versionId: string): Promise<PublishResponse> {
+    const { data } = await api.post<PublishResponse>(`/workflows/${id}/versions/${versionId}/rollback`);
+    return data;
+  },
+  /** The published version history, newest first. */
+  async versions(id: string): Promise<WorkflowVersionSummary[]> {
+    const { data } = await api.get<WorkflowVersionSummary[]>(`/workflows/${id}/versions`);
+    return data;
+  },
+  /** A single version with its full definition (for read-only viewing). */
+  async version(id: string, versionId: string): Promise<WorkflowVersionDetail> {
+    const { data } = await api.get<WorkflowVersionDetail>(`/workflows/${id}/versions/${versionId}`);
+    return data;
   },
   /**
    * Execute a single node in isolation, feeding it sample upstream data. `config`
@@ -116,6 +148,19 @@ export const workflowApi = {
     body: { config?: Record<string, unknown>; trigger?: unknown; sources?: Record<string, unknown> },
   ): Promise<NodeTestResult> {
     const { data } = await api.post<NodeTestResult>(`/workflows/${workflowId}/nodes/${nodeId}/test`, body);
+    return data;
+  },
+};
+
+export const templateApi = {
+  /** The prebuilt template gallery (static, server-defined). */
+  async list(): Promise<TemplateSummary[]> {
+    const { data } = await api.get<TemplateSummary[]>("/templates");
+    return data;
+  },
+  /** Create a new workflow pre-populated from a template; resolves with the new workflow. */
+  async instantiate(templateId: string, workspaceId: string, name?: string): Promise<Workflow> {
+    const { data } = await api.post<Workflow>(`/templates/${templateId}/instantiate`, { workspaceId, name });
     return data;
   },
 };
@@ -157,9 +202,17 @@ export const runApi = {
     const { data } = await api.get<WorkflowRun>(`/runs/${runId}`);
     return data;
   },
-  /** List runs across a whole workspace, with optional filters (runs dashboard). */
-  async listWorkspace(workspaceId: string, filters: RunFilters & { limit?: number } = {}): Promise<WorkspaceRunSummary[]> {
-    const { data } = await api.get<WorkspaceRunSummary[]>("/runs", { params: { workspaceId, ...filters } });
+  /** A run's structured logs; pass `after` (a seq) to fetch only newer lines. */
+  async logs(runId: string, after?: number): Promise<RunLogEntry[]> {
+    const { data } = await api.get<RunLogEntry[]>(`/runs/${runId}/logs`, { params: after ? { after } : undefined });
+    return data;
+  },
+  /** A page of runs across a whole workspace, with optional filters + keyset cursor (runs dashboard). */
+  async listWorkspace(
+    workspaceId: string,
+    filters: RunFilters & { cursor?: string; limit?: number } = {},
+  ): Promise<WorkspaceRunsPage> {
+    const { data } = await api.get<WorkspaceRunsPage>("/runs", { params: { workspaceId, ...filters } });
     return data;
   },
   /** Re-run a past run with the same trigger payload; returns the queued replay. */

@@ -8,7 +8,16 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import { workflowApi, runApi, credentialApi, errorMessage } from "../lib/api";
-import type { Credential, NodeTestResult, RunSummary, WorkflowRun } from "../lib/types";
+import type {
+  Credential,
+  FailureNotifyConfig,
+  NodeTestResult,
+  RunSummary,
+  WorkflowDefinition,
+  WorkflowRun,
+  WorkflowVersionDetail,
+  WorkflowVersionSummary,
+} from "../lib/types";
 import type { RunLiveEvent } from "../lib/realtimeEvents";
 import { toast } from "../store/toasts";
 import {
@@ -23,6 +32,8 @@ import {
 import { buildSampleScope, lastRunSources } from "./sampleData";
 import { toNodeRunStatus, type NodeRunStatus } from "./runStatus";
 import { subscribeToRun, unsubscribeFromRun } from "./liveRun";
+import { sendGraphOps } from "./presence";
+import type { GraphOp, SerializedEdge, SerializedNode } from "../lib/presenceEvents";
 
 type LoadStatus = "idle" | "loading" | "ready" | "error";
 type InspectorTab = "config" | "test" | "lastrun";
@@ -82,6 +93,24 @@ interface EditorState {
   warnings: string[];
   savedAt: number | null;
 
+  // ── Draft / published versioning ───────────────────────────────────────────
+  /** The definition that runs for active triggers. Null until first publish. */
+  publishedDefinition: WorkflowDefinition | null;
+  /** True when the saved draft differs from what's published (drives the badge). */
+  hasUnpublishedChanges: boolean;
+  /** Currently-published version number, or null if never published. */
+  publishedVersion: number | null;
+  publishing: boolean;
+  versionHistoryOpen: boolean;
+  versions: WorkflowVersionSummary[];
+  versionsLoading: boolean;
+  /** A past version being previewed read-only on the canvas (null when editing the draft). */
+  previewVersion: WorkflowVersionDetail | null;
+
+  /** Workflow-level failure alert, or null when none is configured. */
+  failureNotify: FailureNotifyConfig | null;
+  failureAlertOpen: boolean;
+
   // ── Run / execution results ──────────────────────────────────────────────
   running: boolean;
   /** The run whose results are surfaced on the canvas + inspector (live or replayed). */
@@ -108,6 +137,9 @@ interface EditorState {
   onNodesChange: (changes: NodeChange<FluxNode>[]) => void;
   onEdgesChange: (changes: EdgeChange<FluxEdge>[]) => void;
   onConnect: (connection: Connection) => void;
+
+  /** Merge graph edits broadcast by another open editor (last-write-wins). */
+  applyRemoteGraphOps: (ops: GraphOp[]) => void;
 
   addNodeAt: (type: string, position: { x: number; y: number }) => void;
   selectNode: (id: string | null) => void;
@@ -143,6 +175,20 @@ interface EditorState {
 
   save: () => Promise<{ ok: boolean; message?: string }>;
 
+  // ── Versioning ─────────────────────────────────────────────────────────────
+  /** Save pending edits, then promote the draft to published, snapshotting a version. */
+  publish: (note?: string) => Promise<{ ok: boolean; message?: string }>;
+  /** Roll back to a past version; reloads the canvas with the restored definition. */
+  rollbackTo: (versionId: string) => Promise<{ ok: boolean; message?: string }>;
+  setVersionHistoryOpen: (open: boolean) => void;
+  refreshVersions: () => Promise<void>;
+  /** Persist (or clear, with null) the workflow's failure-alert config. */
+  saveFailureNotify: (config: FailureNotifyConfig | null) => Promise<{ ok: boolean; message?: string }>;
+  setFailureAlertOpen: (open: boolean) => void;
+  /** Load a past version onto the canvas read-only; exitPreview returns to the draft. */
+  previewVersionById: (versionId: string) => Promise<{ ok: boolean; message?: string }>;
+  exitPreview: () => void;
+
   run: () => Promise<{ ok: boolean; message?: string }>;
   applyLiveEvent: (event: RunLiveEvent) => void;
   loadRunResult: (runId: string) => Promise<{ ok: boolean; message?: string }>;
@@ -175,6 +221,49 @@ const EMPTY_RUN_STATE = {
   nodeTests: {} as Record<string, NodeTestResult>,
   testingNodeId: null as string | null,
 };
+
+/**
+ * True while applying graph edits received from a peer, so those changes aren't
+ * re-broadcast back out (which would echo forever). Module-scoped so it never
+ * triggers re-renders.
+ */
+let applyingRemote = false;
+
+/** Send graph edits to peers, unless we're mid-applying a peer's edits. */
+function broadcastGraphOps(ops: GraphOp[]): void {
+  if (applyingRemote || ops.length === 0) return;
+  sendGraphOps(ops);
+}
+
+/** Strip transient React Flow flags (selected/measured/dragging) for the wire. */
+function serializeNode(n: FluxNode): SerializedNode {
+  return { id: n.id, position: { x: n.position.x, y: n.position.y }, data: n.data };
+}
+
+function serializeEdge(e: FluxEdge): SerializedEdge {
+  const se: SerializedEdge = { id: e.id, source: e.source, target: e.target };
+  if (e.sourceHandle) se.sourceHandle = e.sourceHandle;
+  if (e.targetHandle) se.targetHandle = e.targetHandle;
+  if (e.style) se.style = e.style as Record<string, unknown>;
+  if (e.data) se.data = e.data as Record<string, unknown>;
+  return se;
+}
+
+function deserializeNode(sn: SerializedNode): FluxNode {
+  return { id: sn.id, type: "flux", position: sn.position, data: sn.data as FluxNode["data"] };
+}
+
+function deserializeEdge(se: SerializedEdge): FluxEdge {
+  return {
+    id: se.id,
+    source: se.source,
+    target: se.target,
+    sourceHandle: se.sourceHandle ?? null,
+    targetHandle: se.targetHandle ?? null,
+    ...(se.style ? { style: se.style } : {}),
+    ...(se.data ? { data: se.data } : {}),
+  };
+}
 
 const POSITION_OR_STRUCTURE = new Set(["position", "add", "remove", "replace"]);
 
@@ -209,6 +298,16 @@ export const useEditor = create<EditorState>((set, get) => ({
   saving: false,
   warnings: [],
   savedAt: null,
+  publishedDefinition: null,
+  hasUnpublishedChanges: false,
+  publishedVersion: null,
+  publishing: false,
+  versionHistoryOpen: false,
+  versions: [],
+  versionsLoading: false,
+  previewVersion: null,
+  failureNotify: null,
+  failureAlertOpen: false,
   ...EMPTY_RUN_STATE,
 
   load: async (id) => {
@@ -238,6 +337,16 @@ export const useEditor = create<EditorState>((set, get) => ({
         dirty: false,
         warnings: [],
         savedAt: null,
+        publishedDefinition: wf.publishedDefinition,
+        hasUnpublishedChanges: wf.hasUnpublishedChanges,
+        publishedVersion: wf.publishedVersion,
+        publishing: false,
+        versionHistoryOpen: false,
+        versions: [],
+        versionsLoading: false,
+        previewVersion: null,
+        failureNotify: wf.failureNotify,
+        failureAlertOpen: false,
         credentials: [],
         credentialsManagerOpen: false,
         ...EMPTY_RUN_STATE,
@@ -287,6 +396,16 @@ export const useEditor = create<EditorState>((set, get) => ({
       saving: false,
       warnings: [],
       savedAt: null,
+      publishedDefinition: null,
+      hasUnpublishedChanges: false,
+      publishedVersion: null,
+      publishing: false,
+      versionHistoryOpen: false,
+      versions: [],
+      versionsLoading: false,
+      previewVersion: null,
+      failureNotify: null,
+      failureAlertOpen: false,
       ...EMPTY_RUN_STATE,
     });
   },
@@ -305,26 +424,102 @@ export const useEditor = create<EditorState>((set, get) => ({
       patch.selectedNodeId = null;
     }
     set(patch);
+
+    // Mirror node drags to peers in near-real-time (coalesced + LWW on their side).
+    const moves = changes
+      .filter((c): c is NodeChange<FluxNode> & { type: "position"; position: { x: number; y: number } } =>
+        c.type === "position" && !!c.position,
+      )
+      .map((c) => ({ id: c.id, x: c.position.x, y: c.position.y }));
+    if (moves.length) broadcastGraphOps([{ t: "move", positions: moves }]);
   },
 
   onEdgesChange: (changes) => {
     const edges = applyEdgeChanges(changes, get().edges);
     set({ edges, dirty: isDirtying(changes) ? true : get().dirty });
+    const removed = changes.filter((c) => c.type === "remove").map((c) => c.id);
+    if (removed.length) broadcastGraphOps([{ t: "remove", edgeIds: removed }]);
   },
 
   onConnect: (connection) => {
+    if (get().previewVersion) return; // read-only while previewing a past version
     if (connection.source === connection.target) return; // no self-loops
     get().pushHistory();
-    const edges = addEdge({ ...connection, id: newEdgeId() }, get().edges);
+    // Error-path edges (from a node's error handle) are styled red so try/catch
+    // branches read at a glance.
+    const isError = connection.sourceHandle === "error";
+    const edge: FluxEdge = {
+      ...connection,
+      id: newEdgeId(),
+      ...(isError ? { style: { stroke: "#e0686b" }, data: { error: true } } : {}),
+    };
+    const edges = addEdge(edge, get().edges);
     set({ edges, dirty: true });
+    broadcastGraphOps([{ t: "upsert", edges: [serializeEdge(edge)] }]);
+  },
+
+  applyRemoteGraphOps: (ops) => {
+    if (get().previewVersion) return; // don't mutate the read-only version preview
+    applyingRemote = true;
+    try {
+      let nodes = get().nodes;
+      let edges = get().edges;
+      const selectedIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+      for (const op of ops) {
+        switch (op.t) {
+          case "move": {
+            const moved = new Map(op.positions.map((p) => [p.id, p]));
+            nodes = nodes.map((n) => (moved.has(n.id) ? { ...n, position: { x: moved.get(n.id)!.x, y: moved.get(n.id)!.y } } : n));
+            break;
+          }
+          case "upsert": {
+            for (const sn of op.nodes ?? []) {
+              const incoming = deserializeNode(sn);
+              const idx = nodes.findIndex((n) => n.id === sn.id);
+              // Preserve the local user's own selection flag on update.
+              if (idx >= 0) nodes = nodes.map((n, i) => (i === idx ? { ...incoming, selected: n.selected } : n));
+              else nodes = [...nodes, incoming];
+            }
+            for (const se of op.edges ?? []) {
+              if (!edges.some((e) => e.id === se.id)) edges = [...edges, deserializeEdge(se)];
+            }
+            break;
+          }
+          case "remove": {
+            const nodeIds = new Set(op.nodeIds ?? []);
+            const edgeIds = new Set(op.edgeIds ?? []);
+            if (nodeIds.size) nodes = nodes.filter((n) => !nodeIds.has(n.id));
+            edges = edges.filter((e) => !edgeIds.has(e.id) && !nodeIds.has(e.source) && !nodeIds.has(e.target));
+            break;
+          }
+          case "replace": {
+            // Reapply our local selection over the wholesale-replaced graph.
+            nodes = op.nodes.map((sn) => ({ ...deserializeNode(sn), selected: selectedIds.has(sn.id) }));
+            edges = op.edges.map(deserializeEdge);
+            break;
+          }
+        }
+      }
+      const selId = get().selectedNodeId;
+      set({
+        nodes,
+        edges,
+        dirty: true,
+        selectedNodeId: selId && nodes.some((n) => n.id === selId) ? selId : null,
+      });
+    } finally {
+      applyingRemote = false;
+    }
   },
 
   addNodeAt: (type, position) => {
+    if (get().previewVersion) return; // read-only while previewing a past version
     get().pushHistory();
     const node = createNode(type, position);
     // Drop it in as the sole selection so it's immediately inspectable.
     const nodes = get().nodes.map((n) => (n.selected ? { ...n, selected: false } : n));
     set({ nodes: [...nodes, { ...node, selected: true }], selectedNodeId: node.id, dirty: true });
+    broadcastGraphOps([{ t: "upsert", nodes: [serializeNode(node)] }]);
   },
 
   selectNode: (id) =>
@@ -335,18 +530,18 @@ export const useEditor = create<EditorState>((set, get) => ({
 
   updateNodeConfig: (id, config) => {
     get().pushHistory(`config:${id}`);
-    set({
-      nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, config } } : n)),
-      dirty: true,
-    });
+    const nodes = get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, config } } : n));
+    set({ nodes, dirty: true });
+    const updated = nodes.find((n) => n.id === id);
+    if (updated) broadcastGraphOps([{ t: "upsert", nodes: [serializeNode(updated)] }]);
   },
 
   updateNodeTitle: (id, title) => {
     get().pushHistory(`title:${id}`);
-    set({
-      nodes: get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, title } } : n)),
-      dirty: true,
-    });
+    const nodes = get().nodes.map((n) => (n.id === id ? { ...n, data: { ...n.data, title } } : n));
+    set({ nodes, dirty: true });
+    const updated = nodes.find((n) => n.id === id);
+    if (updated) broadcastGraphOps([{ t: "upsert", nodes: [serializeNode(updated)] }]);
   },
 
   deleteNode: (id) => {
@@ -357,6 +552,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedNodeId: get().selectedNodeId === id ? null : get().selectedNodeId,
       dirty: true,
     });
+    broadcastGraphOps([{ t: "remove", nodeIds: [id] }]);
   },
 
   // ── Pinned sample data + single-node testing ───────────────────────────────
@@ -372,6 +568,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       }),
       dirty: true,
     });
+    const updated = get().nodes.find((n) => n.id === id);
+    if (updated) broadcastGraphOps([{ t: "upsert", nodes: [serializeNode(updated)] }]);
   },
 
   testNode: async (id) => {
@@ -445,6 +643,8 @@ export const useEditor = create<EditorState>((set, get) => ({
       historyKey: null,
       dirty: true,
     });
+    // Undo/redo change the graph wholesale; a diff would be fragile, so replace.
+    broadcastGraphOps([{ t: "replace", nodes: previous.nodes.map(serializeNode), edges: previous.edges.map(serializeEdge) }]);
   },
 
   redo: () => {
@@ -461,6 +661,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       historyKey: null,
       dirty: true,
     });
+    broadcastGraphOps([{ t: "replace", nodes: nextState.nodes.map(serializeNode), edges: nextState.edges.map(serializeEdge) }]);
   },
 
   selectAll: () =>
@@ -482,6 +683,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedNodeId: null,
       dirty: true,
     });
+    broadcastGraphOps([{ t: "remove", nodeIds: [...nodeIds], edgeIds: [...edgeIds] }]);
   },
 
   copySelection: () => {
@@ -508,6 +710,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedNodeId: pasted.length === 1 ? pasted[0].id : null,
       dirty: true,
     });
+    broadcastGraphOps([{ t: "upsert", nodes: pasted.map(serializeNode), edges: pastedEdges.map(serializeEdge) }]);
   },
 
   duplicateSelection: () => {
@@ -525,6 +728,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       selectedNodeId: dup.length === 1 ? dup[0].id : null,
       dirty: true,
     });
+    broadcastGraphOps([{ t: "upsert", nodes: dup.map(serializeNode), edges: dupEdges.map(serializeEdge) }]);
   },
 
   setSnapToGrid: (snap) => set({ snapToGrid: snap }),
@@ -537,11 +741,21 @@ export const useEditor = create<EditorState>((set, get) => ({
   save: async () => {
     const { id, name, isActive, nodes, edges } = get();
     if (!id) return { ok: false, message: "Nothing to save" };
+    if (get().previewVersion) return { ok: false, message: "Exit version preview to edit" };
     set({ saving: true });
     try {
       const definition = flowToDefinition(nodes, edges);
       const res = await workflowApi.update(id, { name, isActive, definition });
-      set({ saving: false, dirty: false, warnings: res.warnings ?? [], savedAt: Date.now() });
+      set({
+        saving: false,
+        dirty: false,
+        warnings: res.warnings ?? [],
+        savedAt: Date.now(),
+        // The server tells us whether the saved draft now differs from published.
+        publishedDefinition: res.publishedDefinition,
+        hasUnpublishedChanges: res.hasUnpublishedChanges,
+        publishedVersion: res.publishedVersion,
+      });
       return { ok: true };
     } catch (err) {
       set({ saving: false });
@@ -549,9 +763,120 @@ export const useEditor = create<EditorState>((set, get) => ({
     }
   },
 
+  publish: async (note) => {
+    const { id, dirty } = get();
+    if (!id) return { ok: false, message: "Nothing to publish" };
+    // Publish promotes the *saved* draft, so flush pending edits first.
+    if (dirty) {
+      const saved = await get().save();
+      if (!saved.ok) return { ok: false, message: saved.message ?? "Could not save before publishing" };
+    }
+    set({ publishing: true });
+    try {
+      const res = await workflowApi.publish(id, note);
+      set({
+        publishing: false,
+        publishedDefinition: res.workflow.publishedDefinition,
+        publishedVersion: res.workflow.publishedVersion,
+        hasUnpublishedChanges: false,
+      });
+      void get().refreshVersions();
+      return { ok: true };
+    } catch (err) {
+      set({ publishing: false });
+      return { ok: false, message: errorMessage(err, "Could not publish") };
+    }
+  },
+
+  rollbackTo: async (versionId) => {
+    const { id } = get();
+    if (!id) return { ok: false, message: "Nothing to roll back" };
+    try {
+      const res = await workflowApi.rollback(id, versionId);
+      // Rollback also reverts the draft, so reload the canvas from the restored definition.
+      const { nodes, edges } = definitionToFlow(res.workflow.definition);
+      set({
+        nodes,
+        edges,
+        selectedNodeId: null,
+        past: [],
+        future: [],
+        dirty: false,
+        savedAt: Date.now(),
+        publishedDefinition: res.workflow.publishedDefinition,
+        publishedVersion: res.workflow.publishedVersion,
+        hasUnpublishedChanges: false,
+        previewVersion: null,
+      });
+      void get().refreshVersions();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: errorMessage(err, "Could not roll back") };
+    }
+  },
+
+  setVersionHistoryOpen: (open) => {
+    set({ versionHistoryOpen: open });
+    if (open) void get().refreshVersions();
+  },
+
+  refreshVersions: async () => {
+    const { id } = get();
+    if (!id) return;
+    set({ versionsLoading: true });
+    try {
+      const versions = await workflowApi.versions(id);
+      set({ versions, versionsLoading: false });
+    } catch {
+      set({ versionsLoading: false });
+    }
+  },
+
+  saveFailureNotify: async (config) => {
+    const { id } = get();
+    if (!id) return { ok: false, message: "Nothing to configure" };
+    try {
+      const res = await workflowApi.update(id, { failureNotify: config });
+      set({ failureNotify: res.failureNotify, failureAlertOpen: false });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: errorMessage(err, "Could not save failure alert") };
+    }
+  },
+
+  setFailureAlertOpen: (open) => set({ failureAlertOpen: open }),
+
+  previewVersionById: async (versionId) => {
+    const { id } = get();
+    if (!id) return { ok: false, message: "Nothing to preview" };
+    // Flush unsaved edits first, so exiting the read-only preview restores them.
+    if (get().dirty) {
+      const saved = await get().save();
+      if (!saved.ok) return { ok: false, message: saved.message ?? "Could not save before previewing" };
+    }
+    try {
+      const detail = await workflowApi.version(id, versionId);
+      const { nodes, edges } = definitionToFlow(detail.definition);
+      // Read-only preview: swap the canvas to the version's graph without marking dirty.
+      set({ previewVersion: detail, nodes, edges, selectedNodeId: null });
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: errorMessage(err, "Could not load this version") };
+    }
+  },
+
+  exitPreview: () => {
+    // Restore the live draft from the last-known graph by reloading the workflow.
+    const { id, previewVersion } = get();
+    if (!previewVersion || !id) return;
+    set({ previewVersion: null });
+    void get().load(id);
+  },
+
   run: async () => {
     const { id, dirty, running } = get();
     if (!id) return { ok: false, message: "Nothing to run" };
+    if (get().previewVersion) return { ok: false, message: "Exit version preview to run" };
     if (running) return { ok: false, message: "Already running" };
 
     // The engine runs the *saved* definition, so flush pending edits first.

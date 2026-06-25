@@ -2,12 +2,13 @@ import { useState } from "react";
 import { useAuth } from "../store/auth";
 import { navigate, useRoute } from "../lib/router";
 import { CredentialsManager } from "./CredentialsManager";
-import { ChartIcon, GridIcon, HistoryIcon, KeyIcon, Logo, LogoutIcon } from "./icons";
+import { ChartIcon, GridIcon, HistoryIcon, KeyIcon, Logo, LogoutIcon, SparkIcon } from "./icons";
 
-type NavKey = "workflows" | "runs" | "analytics";
+type NavKey = "workflows" | "templates" | "runs" | "analytics";
 
 const TABS: { key: NavKey; label: string; path: string; icon: typeof GridIcon }[] = [
   { key: "workflows", label: "Workflows", path: "/", icon: GridIcon },
+  { key: "templates", label: "Templates", path: "/templates", icon: SparkIcon },
   { key: "runs", label: "Runs", path: "/runs", icon: HistoryIcon },
   { key: "analytics", label: "Analytics", path: "/analytics", icon: ChartIcon },
 ];

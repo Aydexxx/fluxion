@@ -37,9 +37,11 @@ const webhookDef = {
   edges: [{ id: "e1", source: "t", target: "out" }],
 };
 
-async function createWebhookWorkflow(token: string, workspaceId: string, isActive = true) {
+async function createWebhookWorkflow(token: string, workspaceId: string, isActive = true, publish = true) {
   const created = await request(app).post("/workflows").set(...authHeader(token)).send({ workspaceId, name: "Hooked" });
   await request(app).put(`/workflows/${created.body.id}`).set(...authHeader(token)).send({ definition: webhookDef, isActive });
+  // Webhooks run the *published* version, so publish unless a test wants the unpublished case.
+  if (publish) await request(app).post(`/workflows/${created.body.id}/publish`).set(...authHeader(token)).send({});
   return { id: created.body.id as string, webhookToken: created.body.webhookToken as string };
 }
 
@@ -86,6 +88,18 @@ describe("POST /webhooks/:token", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.accepted).toBe(false);
+    expect(enqueueSpy).not.toHaveBeenCalled();
+    expect(await prisma.workflowRun.count({ where: { workflowId: wf.id } })).toBe(0);
+  });
+
+  it("does not fire for an active-but-unpublished workflow", async () => {
+    const owner = await registerUser("hook-unpub@example.com");
+    const wf = await createWebhookWorkflow(owner.token, owner.workspaceId, true, false);
+
+    const res = await request(app).post(`/webhooks/${wf.webhookToken}`).send({ hello: "world" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ accepted: false, reason: "workflow_unpublished" });
     expect(enqueueSpy).not.toHaveBeenCalled();
     expect(await prisma.workflowRun.count({ where: { workflowId: wf.id } })).toBe(0);
   });

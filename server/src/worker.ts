@@ -12,6 +12,7 @@ import { WORKFLOW_RUNS_QUEUE, type WorkflowRunJobData } from "./queue/workflowQu
 import { WORKFLOW_SCHEDULES_QUEUE, type ScheduleJobData } from "./queue/scheduleQueue";
 import { createRunEventEmitter } from "./realtime/emitter";
 import { handleJobFailure, runJob, type ProcessRunDeps } from "./worker/processRun";
+import { dispatchFailureNotification } from "./worker/failureNotifier";
 import { enqueueRunForWorkflow } from "./services/runs";
 import { prisma } from "./services/prisma";
 
@@ -21,7 +22,7 @@ import { prisma } from "./services/prisma";
  * live status to the editor via Socket.IO (Redis). Run with `npm run worker`.
  */
 const connection = createRedisConnection();
-const { sink: onEvent, close: closeEmitter } = createRunEventEmitter();
+const { sink: onEvent, logSink: onLog, close: closeEmitter } = createRunEventEmitter();
 const recorder = new PrismaRunRecorder(prisma);
 
 const deps: ProcessRunDeps = {
@@ -29,7 +30,10 @@ const deps: ProcessRunDeps = {
   loadWorkflow: async (workflowId) => {
     const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
     if (!workflow) return null;
-    return { definition: workflow.definition as unknown as WorkflowDefinition, workspaceId: workflow.workspaceId };
+    // Fallback only — the run's own definition snapshot is preferred (see processRun).
+    // For triggers, the published definition is what production runs.
+    const published = (workflow.publishedDefinition as unknown as WorkflowDefinition | null) ?? { nodes: [], edges: [] };
+    return { definition: published, workspaceId: workflow.workspaceId };
   },
   registry: createDefaultRegistry(),
   llm: env.llm,
@@ -39,6 +43,10 @@ const deps: ProcessRunDeps = {
   db: pgQueryRunner,
   limits: { httpTimeoutMs: env.nodeTimeouts.httpMs, aiTimeoutMs: env.nodeTimeouts.aiMs },
   onEvent,
+  onLog,
+  // On dead-letter, alert the workflow's configured channel (best-effort).
+  onTerminalFailure: (runId) =>
+    dispatchFailureNotification(runId, { prisma, credentialsFor: createPrismaCredentialAccessor, email: nodemailerSender }),
 };
 
 const worker = new Worker<WorkflowRunJobData>(

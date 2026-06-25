@@ -10,9 +10,12 @@ import { useReducedMotion } from "framer-motion";
 import { useEditor } from "./editorStore";
 import { WorkflowNode } from "./WorkflowNode";
 import { CanvasControls } from "./CanvasControls";
+import { PresenceLayer } from "./PresenceLayer";
+import { sendCursor } from "./presence";
 import { categoryAccent } from "./nodeCatalog";
 import type { FluxNode } from "./graph";
 import { DRAG_MIME } from "./dragMime";
+import { navigate } from "../lib/router";
 
 const SNAP_GRID: [number, number] = [24, 24];
 
@@ -33,6 +36,7 @@ export function WorkflowCanvas() {
   const status = useEditor((s) => s.status);
   const workflowId = useEditor((s) => s.id);
   const snapToGrid = useEditor((s) => s.snapToGrid);
+  const readOnly = useEditor((s) => s.previewVersion !== null);
   const onNodesChange = useEditor((s) => s.onNodesChange);
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
   const onConnect = useEditor((s) => s.onConnect);
@@ -57,13 +61,24 @@ export function WorkflowCanvas() {
   const onDrop = useCallback(
     (event: React.DragEvent) => {
       event.preventDefault();
+      if (readOnly) return; // can't drop nodes while previewing a past version
       const type = event.dataTransfer.getData(DRAG_MIME);
       if (!type) return;
       const position = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
       // Center the node on the cursor (node is 228px wide, ~74px tall).
       addNodeAt(type, { x: position.x - 114, y: position.y - 37 });
     },
-    [reactFlow, addNodeAt],
+    [reactFlow, addNodeAt, readOnly],
+  );
+
+  // Broadcast our cursor in flow-space so it tracks canvas content for peers
+  // regardless of their own pan/zoom. Throttled inside the presence client.
+  const onPointerMove = useCallback(
+    (event: React.PointerEvent) => {
+      const p = reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      sendCursor(p.x, p.y);
+    },
+    [reactFlow],
   );
 
   const onPaneClick = useCallback(() => selectNode(null), [selectNode]);
@@ -72,7 +87,7 @@ export function WorkflowCanvas() {
   const onDragStart = useCallback(() => beginInteraction(), [beginInteraction]);
 
   return (
-    <div ref={wrapperRef} className="relative h-full w-full" onDrop={onDrop} onDragOver={onDragOver}>
+    <div ref={wrapperRef} className="relative h-full w-full" onDrop={onDrop} onDragOver={onDragOver} onPointerMove={onPointerMove}>
       {/* Ambient atmosphere behind the dot grid */}
       <div
         aria-hidden
@@ -97,6 +112,9 @@ export function WorkflowCanvas() {
         // Shift-click adds to the selection; Shift-drag on the pane draws a marquee.
         multiSelectionKeyCode="Shift"
         selectionKeyCode="Shift"
+        // Read-only while previewing a past version: pan/zoom only, no editing.
+        nodesDraggable={!readOnly}
+        nodesConnectable={!readOnly}
         snapToGrid={snapToGrid}
         snapGrid={SNAP_GRID}
         proOptions={{ hideAttribution: false }}
@@ -124,19 +142,40 @@ export function WorkflowCanvas() {
         />
       </ReactFlow>
 
-      {status === "ready" && nodes.length === 0 ? <EmptyCanvasHint /> : null}
+      {/* Remote collaborators: live cursors, selection highlights, edit badges. */}
+      <PresenceLayer />
+
+      {status === "ready" && nodes.length === 0 && !readOnly ? <EmptyCanvasHint /> : null}
     </div>
   );
 }
 
 function EmptyCanvasHint() {
+  const setCommandPaletteOpen = useEditor((s) => s.setCommandPaletteOpen);
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
       <div className="select-none text-center">
         <p className="font-display text-[15px] font-medium text-muted">Your canvas is empty</p>
         <p className="mt-1 text-[13px] text-faint">
-          Drag a <span className="text-ink">trigger</span> from the left to begin the flow.
+          Drag a <span className="text-ink">trigger</span> from the node library, or
         </p>
+        <div className="pointer-events-auto mt-4 flex items-center justify-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setCommandPaletteOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-surface/70 px-3 py-1.5 text-[12.5px] font-medium text-ink backdrop-blur transition-colors hover:bg-white/5"
+          >
+            Open palette
+            <kbd className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-faint">⌘K</kbd>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate("/templates")}
+            className="rounded-lg border border-white/10 bg-surface/70 px-3 py-1.5 text-[12.5px] font-medium text-ink backdrop-blur transition-colors hover:bg-white/5"
+          >
+            Browse templates
+          </button>
+        </div>
       </div>
     </div>
   );

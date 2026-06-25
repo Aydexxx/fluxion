@@ -8,9 +8,13 @@ import { WorkflowCanvas } from "../editor/WorkflowCanvas";
 import { ConfigPanel } from "../editor/ConfigPanel";
 import { RunResultsBar } from "../editor/RunResultsBar";
 import { RunHistoryDrawer } from "../editor/RunHistoryDrawer";
+import { VersionHistoryDrawer } from "../editor/VersionHistoryDrawer";
 import { CommandPalette } from "../editor/CommandPalette";
 import { ShortcutsHelp } from "../editor/ShortcutsHelp";
+import { FirstRunGuide } from "../editor/FirstRunGuide";
+import { FailureAlertDialog } from "../editor/FailureAlertDialog";
 import { useEditorShortcuts } from "../editor/useEditorShortcuts";
+import { connectPresence, disconnectPresence, sendSelection } from "../editor/presence";
 import { CredentialsManager } from "../components/CredentialsManager";
 import { navigate } from "../lib/router";
 import { Logo, SpinnerIcon } from "../components/icons";
@@ -24,11 +28,33 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
   const credentialsManagerOpen = useEditor((s) => s.credentialsManagerOpen);
   const setCredentialsManagerOpen = useEditor((s) => s.setCredentialsManagerOpen);
   const refreshCredentials = useEditor((s) => s.refreshCredentials);
+  // While previewing a past version the editor is read-only: no palette, no inspector.
+  const previewing = useEditor((s) => s.previewVersion !== null);
+  const applyRemoteGraphOps = useEditor((s) => s.applyRemoteGraphOps);
 
   useEffect(() => {
     void load(workflowId);
     return () => reset();
   }, [workflowId, load, reset]);
+
+  // Real-time multi-user awareness: join the workflow's presence room, mirror
+  // peers' graph edits into the store, and broadcast our own selection.
+  useEffect(() => {
+    connectPresence(workflowId, applyRemoteGraphOps);
+    let prevKey = "";
+    const unsubscribe = useEditor.subscribe((s) => {
+      const ids = s.nodes.filter((n) => n.selected).map((n) => n.id);
+      const key = ids.join("|");
+      if (key !== prevKey) {
+        prevKey = key;
+        sendSelection(ids);
+      }
+    });
+    return () => {
+      unsubscribe();
+      disconnectPresence();
+    };
+  }, [workflowId, applyRemoteGraphOps]);
 
   return (
     <ReactFlowProvider>
@@ -36,19 +62,22 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
       <div className="flex h-screen flex-col bg-base">
         <EditorTopBar />
         <div className="relative flex min-h-0 flex-1">
-          <NodePalette />
+          {previewing ? null : <NodePalette />}
           <main className="relative min-w-0 flex-1">
             <WorkflowCanvas />
-            <ConfigPanel />
+            {previewing ? null : <ConfigPanel />}
             <RunResultsBar />
             <RunHistoryDrawer />
+            <VersionHistoryDrawer />
             {status === "loading" ? <LoadingVeil /> : null}
             {status === "error" ? <ErrorVeil message={error} /> : null}
+            <FirstRunGuide />
           </main>
         </div>
       </div>
       <CommandPalette />
       <ShortcutsHelp />
+      <FailureAlertDialog />
       <CredentialsManager
         open={credentialsManagerOpen}
         workspaceId={workspaceId}

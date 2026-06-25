@@ -1,7 +1,12 @@
 import type { Request, Response } from "express";
 import { currentUserId } from "../middleware/auth";
 import * as workflowService from "../services/workflows";
-import type { SafeWorkflow, SafeWorkflowSummary } from "../services/workflows";
+import type {
+  SafeWorkflow,
+  SafeWorkflowSummary,
+  SafeWorkflowVersion,
+  SafeWorkflowVersionDetail,
+} from "../services/workflows";
 import { listRuns, runWorkflowById } from "../services/runs";
 import type { RunSummaryRecord } from "../services/runs";
 import { testWorkflowNode } from "../services/nodeTest";
@@ -10,6 +15,7 @@ import type { SingleNodeResult } from "../engine/runSingleNode";
 import type {
   CreateWorkflowInput,
   ListWorkflowsQuery,
+  PublishWorkflowInput,
   RunWorkflowInput,
   TestNodeInput,
   UpdateWorkflowInput,
@@ -47,6 +53,38 @@ export async function updateWorkflow(
 export async function deleteWorkflow(req: Request<{ id: string }>, res: Response): Promise<void> {
   await workflowService.deleteWorkflow(req.params.id, currentUserId(req));
   res.status(204).end();
+}
+
+export async function publishWorkflow(
+  req: Request<{ id: string }, unknown, PublishWorkflowInput>,
+  res: Response<{ workflow: SafeWorkflow; version: SafeWorkflowVersion }>,
+): Promise<void> {
+  const result = await workflowService.publishWorkflow(req.params.id, currentUserId(req), { note: req.body.note });
+  res.status(201).json(result);
+}
+
+export async function rollbackWorkflow(
+  req: Request<{ id: string; versionId: string }>,
+  res: Response<{ workflow: SafeWorkflow; version: SafeWorkflowVersion }>,
+): Promise<void> {
+  const result = await workflowService.rollbackWorkflow(req.params.id, currentUserId(req), req.params.versionId);
+  res.status(201).json(result);
+}
+
+export async function listWorkflowVersions(
+  req: Request<{ id: string }>,
+  res: Response<SafeWorkflowVersion[]>,
+): Promise<void> {
+  const versions = await workflowService.listWorkflowVersions(req.params.id, currentUserId(req));
+  res.json(versions);
+}
+
+export async function getWorkflowVersion(
+  req: Request<{ id: string; versionId: string }>,
+  res: Response<SafeWorkflowVersionDetail>,
+): Promise<void> {
+  const version = await workflowService.getWorkflowVersion(req.params.id, req.params.versionId, currentUserId(req));
+  res.json(version);
 }
 
 export async function runWorkflow(

@@ -1,25 +1,25 @@
-import { useEffect, useState } from "react";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../store/auth";
 import { runApi, workflowApi, errorMessage } from "../lib/api";
-import type { ExecutionStatus, WorkflowRun, WorkflowSummary, WorkspaceRunSummary } from "../lib/types";
+import type { ExecutionStatus, RunTriggerType, WorkflowSummary, WorkspaceRunSummary } from "../lib/types";
 import { TopNav } from "../components/TopNav";
-import { StatusBadge, JsonBlock } from "../editor/RunBits";
+import { StatusBadge } from "../editor/RunBits";
 import { Select } from "../components/Field";
-import { CloseIcon, HistoryIcon, PlayIcon, SpinnerIcon } from "../components/icons";
+import { EmptyState, ErrorState, LoadingState } from "../components/ui/states";
+import { HistoryIcon, PlayIcon, SearchIcon, SpinnerIcon } from "../components/icons";
 import { formatDuration, timeAgo } from "../lib/format";
 import { navigate } from "../lib/router";
 import { toast } from "../store/toasts";
-import { EASE } from "../lib/motion";
-import { useFocusTrap } from "../lib/useFocusTrap";
 
 const STATUSES: (ExecutionStatus | "all")[] = ["all", "queued", "running", "success", "failed"];
+const TRIGGERS: (RunTriggerType | "all")[] = ["all", "manual", "webhook", "schedule"];
 const RANGES = [
   { key: "1", label: "24h", days: 1 },
   { key: "7", label: "7 days", days: 7 },
   { key: "30", label: "30 days", days: 30 },
   { key: "all", label: "All time", days: 0 },
 ];
+const PAGE_SIZE = 25;
 
 function rangeFrom(days: number): string | undefined {
   if (days <= 0) return undefined;
@@ -32,16 +32,25 @@ export function RunsPage() {
   const [workflows, setWorkflows] = useState<WorkflowSummary[]>([]);
   const [status, setStatus] = useState<ExecutionStatus | "all">("all");
   const [workflowId, setWorkflowId] = useState<string>("all");
+  const [trigger, setTrigger] = useState<RunTriggerType | "all">("all");
   const [rangeKey, setRangeKey] = useState("7");
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState("");
 
   const [runs, setRuns] = useState<WorkspaceRunSummary[] | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
+  // Bumped to force a re-fetch of the first page (used by the error-state retry).
+  const [reloadToken, setReloadToken] = useState(0);
+  // Increments on every filter change so in-flight pages from a stale query are ignored.
+  const queryId = useRef(0);
 
-  const buildFilters = () => ({
-    status: status === "all" ? undefined : status,
-    workflowId: workflowId === "all" ? undefined : workflowId,
-    from: rangeFrom(RANGES.find((r) => r.key === rangeKey)?.days ?? 7),
-  });
+  // Debounce the search box so typing doesn't fire a request per keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setSearch(searchInput.trim()), 300);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   useEffect(() => {
     if (!workspace) return;
@@ -54,34 +63,65 @@ export function RunsPage() {
     })();
   }, [workspace]);
 
+  const buildFilters = useCallback(
+    () => ({
+      status: status === "all" ? undefined : status,
+      workflowId: workflowId === "all" ? undefined : workflowId,
+      trigger: trigger === "all" ? undefined : trigger,
+      search: search || undefined,
+      from: rangeFrom(RANGES.find((r) => r.key === rangeKey)?.days ?? 7),
+      limit: PAGE_SIZE,
+    }),
+    [status, workflowId, trigger, search, rangeKey],
+  );
+
+  // (Re)load the first page whenever filters change.
   useEffect(() => {
     if (!workspace) return;
-    let alive = true;
+    const id = ++queryId.current;
     void (async () => {
       setRuns(null);
+      setCursor(null);
+      setError(null);
       try {
-        const list = await runApi.listWorkspace(workspace.id, buildFilters());
-        if (alive) setRuns(list);
+        const page = await runApi.listWorkspace(workspace.id, buildFilters());
+        if (queryId.current !== id) return; // a newer query superseded this one
+        setRuns(page.runs);
+        setCursor(page.nextCursor);
       } catch (err) {
-        if (alive) {
-          setRuns([]);
-          toast.error(errorMessage(err, "Could not load runs"));
-        }
+        if (queryId.current !== id) return;
+        setError(errorMessage(err, "Could not load runs"));
       }
     })();
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace, status, workflowId, rangeKey]);
+  }, [workspace, buildFilters, reloadToken]);
 
-  const refresh = () => {
-    if (!workspace) return;
-    runApi
-      .listWorkspace(workspace.id, buildFilters())
-      .then(setRuns)
-      .catch(() => {});
-  };
+  const loadMore = useCallback(async () => {
+    if (!workspace || !cursor || loadingMore) return;
+    const id = queryId.current;
+    setLoadingMore(true);
+    try {
+      const page = await runApi.listWorkspace(workspace.id, { ...buildFilters(), cursor });
+      if (queryId.current !== id) return;
+      setRuns((prev) => [...(prev ?? []), ...page.runs]);
+      setCursor(page.nextCursor);
+    } catch (err) {
+      toast.error(errorMessage(err, "Could not load more runs"));
+    } finally {
+      if (queryId.current === id) setLoadingMore(false);
+    }
+  }, [workspace, cursor, loadingMore, buildFilters]);
+
+  // Infinite scroll: load the next page when the sentinel scrolls into view.
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el || !cursor) return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) void loadMore();
+    }, { rootMargin: "240px" });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [cursor, loadMore]);
 
   return (
     <div className="relative h-screen overflow-y-auto bg-base">
@@ -96,7 +136,17 @@ export function RunsPage() {
 
         {/* filters */}
         <div className="mt-6 flex flex-wrap items-center gap-2">
-          <div className="w-[150px]">
+          <div className="relative min-w-[200px] flex-1">
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-faint" />
+            <input
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search by workflow or run id"
+              spellCheck={false}
+              className="w-full rounded-lg border border-white/8 bg-surface/40 py-2 pl-9 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-faint focus:border-accent/60"
+            />
+          </div>
+          <div className="w-[140px]">
             <Select value={status} onChange={(e) => setStatus(e.target.value as ExecutionStatus | "all")}>
               {STATUSES.map((s) => (
                 <option key={s} value={s}>
@@ -105,7 +155,16 @@ export function RunsPage() {
               ))}
             </Select>
           </div>
-          <div className="w-[200px]">
+          <div className="w-[140px]">
+            <Select value={trigger} onChange={(e) => setTrigger(e.target.value as RunTriggerType | "all")}>
+              {TRIGGERS.map((t) => (
+                <option key={t} value={t}>
+                  {t === "all" ? "All triggers" : t[0].toUpperCase() + t.slice(1)}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="w-[180px]">
             <Select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}>
               <option value="all">All workflows</option>
               {workflows.map((w) => (
@@ -115,7 +174,7 @@ export function RunsPage() {
               ))}
             </Select>
           </div>
-          <div className="ml-auto flex gap-1 rounded-lg border border-white/8 p-0.5">
+          <div className="flex gap-1 rounded-lg border border-white/8 p-0.5">
             {RANGES.map((r) => (
               <button
                 key={r.key}
@@ -133,19 +192,25 @@ export function RunsPage() {
           </div>
         </div>
 
-        {/* table */}
-        <div className="mt-5 overflow-hidden rounded-2xl border border-white/8 bg-surface/40">
-          {runs === null ? (
-            <div className="flex items-center justify-center py-16 text-muted">
-              <SpinnerIcon className="animate-spin text-[18px]" />
-            </div>
-          ) : runs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-              <HistoryIcon className="text-[24px] text-faint" />
-              <p className="text-sm text-muted">No runs match these filters.</p>
-            </div>
-          ) : (
-            <table className="w-full text-left text-[13px]">
+        {/* results */}
+        {error ? (
+          <div className="mt-5">
+            <ErrorState title="Couldn’t load runs" message={error} onRetry={() => setReloadToken((t) => t + 1)} />
+          </div>
+        ) : runs && runs.length === 0 ? (
+          <div className="mt-5">
+            <EmptyState
+              icon={<HistoryIcon />}
+              title="No runs match these filters"
+              description="Adjust the filters above, or run a workflow to see its execution history here."
+            />
+          </div>
+        ) : (
+          <div className="mt-5 overflow-hidden rounded-2xl border border-white/8 bg-surface/40">
+            {runs === null ? (
+              <LoadingState className="py-16" />
+            ) : (
+              <table className="w-full text-left text-[13px]">
               <thead>
                 <tr className="border-b border-white/8 text-[11px] uppercase tracking-[0.1em] text-faint">
                   <th className="px-4 py-2.5 font-medium">Workflow</th>
@@ -160,15 +225,31 @@ export function RunsPage() {
                 {runs.map((run) => (
                   <tr
                     key={run.id}
-                    onClick={() => setSelectedId(run.id)}
+                    onClick={() => navigate(`/runs/${run.id}`)}
                     className="cursor-pointer border-b border-white/5 transition-colors last:border-0 hover:bg-white/4"
                   >
                     <td className="px-4 py-3">
                       <div className="font-medium text-ink">{run.workflowName}</div>
-                      {run.replayOfId ? <div className="text-[11px] text-faint">replay</div> : null}
+                      <div className="flex items-center gap-2">
+                        {run.replayOfId ? <span className="text-[11px] text-faint">replay</span> : null}
+                        <span className="font-mono text-[10.5px] text-faint">{run.id.slice(0, 8)}</span>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <StatusBadge status={run.status} />
+                      {run.status === "failed" && run.failingNode ? (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/runs/${run.id}?node=${encodeURIComponent(run.failingNode!)}`);
+                          }}
+                          className="mt-1 block font-mono text-[10.5px] text-red-300/80 transition-colors hover:text-red-300"
+                          title="Jump to the failing node"
+                        >
+                          ↯ {run.failingNode}
+                        </button>
+                      ) : null}
                     </td>
                     <td className="hidden px-4 py-3 text-muted sm:table-cell">{run.trigger}</td>
                     <td className="hidden px-4 py-3 font-mono text-[12px] text-muted md:table-cell">
@@ -176,22 +257,36 @@ export function RunsPage() {
                     </td>
                     <td className="px-4 py-3 text-muted">{run.createdAt ? timeAgo(run.createdAt) : "—"}</td>
                     <td className="px-4 py-3 text-right">
-                      <ReplayButton runId={run.id} onReplayed={refresh} compact />
+                      <ReplayButton runId={run.id} />
                     </td>
                   </tr>
                 ))}
               </tbody>
-            </table>
-          )}
-        </div>
-      </main>
+              </table>
+            )}
+          </div>
+        )}
 
-      <RunDetailDrawer runId={selectedId} onClose={() => setSelectedId(null)} onReplayed={refresh} />
+        {/* infinite-scroll sentinel + manual fallback */}
+        {runs && runs.length > 0 && cursor ? (
+          <div ref={sentinelRef} className="flex justify-center py-6">
+            <button
+              type="button"
+              onClick={() => void loadMore()}
+              disabled={loadingMore}
+              className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-4 py-2 text-[13px] font-medium text-muted transition-colors hover:text-ink disabled:opacity-60"
+            >
+              {loadingMore ? <SpinnerIcon className="animate-spin text-[14px]" /> : null}
+              {loadingMore ? "Loading…" : "Load more"}
+            </button>
+          </div>
+        ) : null}
+      </main>
     </div>
   );
 }
 
-function ReplayButton({ runId, onReplayed, compact }: { runId: string; onReplayed: () => void; compact?: boolean }) {
+function ReplayButton({ runId }: { runId: string }) {
   const [busy, setBusy] = useState(false);
   const replay = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -199,8 +294,7 @@ function ReplayButton({ runId, onReplayed, compact }: { runId: string; onReplaye
     try {
       const fresh = await runApi.replay(runId);
       toast.success("Replay queued");
-      onReplayed();
-      void fresh;
+      navigate(`/runs/${fresh.id}`);
     } catch (err) {
       toast.error(errorMessage(err, "Could not replay this run"));
     } finally {
@@ -212,125 +306,9 @@ function ReplayButton({ runId, onReplayed, compact }: { runId: string; onReplaye
       type="button"
       onClick={replay}
       disabled={busy}
-      className={`inline-flex items-center gap-1.5 rounded-lg border border-white/8 font-medium text-muted transition-colors hover:border-accent/40 hover:text-ink disabled:opacity-60 ${
-        compact ? "px-2 py-1 text-[11.5px]" : "px-3 py-1.5 text-[13px]"
-      }`}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-white/8 px-2 py-1 text-[11.5px] font-medium text-muted transition-colors hover:border-accent/40 hover:text-ink disabled:opacity-60"
     >
       {busy ? <SpinnerIcon className="animate-spin text-[13px]" /> : <PlayIcon className="text-[13px]" />} Replay
     </button>
-  );
-}
-
-function RunDetailDrawer({ runId, onClose, onReplayed }: { runId: string | null; onClose: () => void; onReplayed: () => void }) {
-  const reduce = useReducedMotion();
-  const trapRef = useFocusTrap<HTMLElement>(runId !== null, onClose);
-  const [run, setRun] = useState<WorkflowRun | null>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    if (!runId) return;
-    let alive = true;
-    void (async () => {
-      setRun(null);
-      setLoading(true);
-      try {
-        const r = await runApi.get(runId);
-        if (alive) setRun(r);
-      } catch (err) {
-        if (alive) toast.error(errorMessage(err, "Could not load run detail"));
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [runId]);
-
-  return (
-    <AnimatePresence>
-      {runId ? (
-        <div className="fixed inset-0 z-[70]">
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-void/60 backdrop-blur-sm" />
-          <motion.aside
-            ref={trapRef}
-            tabIndex={-1}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Run detail"
-            initial={reduce ? { opacity: 0 } : { x: 40, opacity: 0 }}
-            animate={reduce ? { opacity: 1 } : { x: 0, opacity: 1 }}
-            exit={reduce ? { opacity: 0 } : { x: 40, opacity: 0 }}
-            transition={{ duration: 0.3, ease: EASE }}
-            className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col overflow-hidden border-l border-white/8 bg-base outline-none"
-          >
-            <header className="flex items-center justify-between border-b border-white/8 p-4">
-              <div>
-                <h2 className="text-[15px] font-semibold text-ink">Run detail</h2>
-                {run ? <p className="mt-0.5 font-mono text-[11px] text-faint">{run.id}</p> : null}
-              </div>
-              <div className="flex items-center gap-2">
-                {run ? <ReplayButton runId={run.id} onReplayed={onReplayed} /> : null}
-                <button type="button" aria-label="Close" onClick={onClose} className="rounded-lg p-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink">
-                  <CloseIcon />
-                </button>
-              </div>
-            </header>
-
-            <div className="flex-1 overflow-y-auto p-4">
-              {loading || !run ? (
-                <div className="flex items-center justify-center py-16 text-muted">
-                  <SpinnerIcon className="animate-spin text-[18px]" />
-                </div>
-              ) : (
-                <div className="space-y-5">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <StatusBadge status={run.status} />
-                    <span className="text-[12px] text-muted">{run.trigger}</span>
-                    <span className="font-mono text-[12px] text-faint">{formatDuration(run.startedAt, run.finishedAt)}</span>
-                    {run.replayOfId ? (
-                      <button
-                        type="button"
-                        onClick={() => navigate("/runs")}
-                        className="rounded-md bg-white/6 px-2 py-0.5 font-mono text-[11px] text-muted hover:text-ink"
-                        title={run.replayOfId}
-                      >
-                        ↳ replay of {run.replayOfId.slice(0, 8)}…
-                      </button>
-                    ) : null}
-                  </div>
-
-                  {run.error ? <JsonBlock label="Run error" value={run.error} tone="error" /> : null}
-
-                  <div>
-                    <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.13em] text-faint">
-                      Nodes ({run.nodeExecutions.length})
-                    </div>
-                    <div className="space-y-3">
-                      {run.nodeExecutions.map((exec) => (
-                        <div key={exec.id} className="rounded-xl border border-white/8 bg-surface/40 p-3">
-                          <div className="mb-2 flex items-center justify-between">
-                            <span className="font-mono text-[12px] text-ink">{exec.nodeId}</span>
-                            <div className="flex items-center gap-2">
-                              <span className="font-mono text-[11px] text-faint">{formatDuration(exec.startedAt, exec.finishedAt)}</span>
-                              <StatusBadge status={exec.status} dim />
-                            </div>
-                          </div>
-                          {exec.error ? <JsonBlock label="Error" value={exec.error} tone="error" /> : null}
-                          <div className="mt-2 grid gap-2">
-                            <JsonBlock label="Input" value={exec.input} />
-                            <JsonBlock label="Output" value={exec.output} />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </motion.aside>
-        </div>
-      ) : null}
-    </AnimatePresence>
   );
 }

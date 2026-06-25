@@ -35,6 +35,7 @@ function run(executions: Array<{ nodeId: string; output: unknown }>): WorkflowRu
       input: null,
       output: e.output,
       error: null,
+      attempts: 1,
       startedAt: null,
       finishedAt: null,
     })),

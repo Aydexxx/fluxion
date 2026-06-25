@@ -77,15 +77,44 @@ model Workflow {
   isActive    Boolean  @default(true)
   /// Unguessable token for this workflow's inbound webhook URL (/webhooks/:token).
   webhookToken String? @unique
-  /// DAG (nodes + edges) for this workflow.
-  definition  Json
+  /// The DAG being edited. Editing only ever touches the draft; it never runs in production.
+  draftDefinition Json
+  /// The DAG that actually runs for active webhook/schedule triggers. Null until first publish.
+  publishedDefinition Json?
+  /// Optional failure-alert config: `{ channel, credentialId, to? }`. Null = no alerts.
+  failureNotify Json?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   runs      WorkflowRun[]
+  versions  WorkflowVersion[]
 
   @@index([workspaceId])
+}
+
+/// An immutable snapshot taken every time a workflow is published (or rolled back).
+/// The newest version (highest `version`) is always the one currently published.
+model WorkflowVersion {
+  id         String   @id @default(cuid())
+  workflowId String
+  /// Monotonic per-workflow version number (1, 2, 3 …).
+  version    Int
+  /// Workflow name at snapshot time, for a self-contained history entry.
+  name       String
+  /// Short human note, e.g. "Published" or "Rolled back to v3".
+  note       String?
+  /// Who published it (id + denormalized name so history needs no joins). Null for system/migration entries.
+  authorId   String?
+  authorName String?
+  /// The exact DAG that was promoted to published by this version.
+  definition Json
+  createdAt  DateTime @default(now())
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, version])
+  @@index([workflowId])
 }
 
 /// One execution of a Workflow.
@@ -99,17 +128,23 @@ model WorkflowRun {
   finishedAt DateTime?
   error      String?
   payload    Json?
+  /// Snapshot of the exact definition this run executes, captured at enqueue time.
+  /// Decouples a run from later draft edits, so editing never alters an in-flight run.
+  definition Json?
   /// When this run is a replay, the run it was replayed from (kept for lineage).
   replayOfId String?
 
   workflow       Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   nodeExecutions NodeExecution[]
+  logs           RunLog[]
   replayOf       WorkflowRun?    @relation("RunReplays", fields: [replayOfId], references: [id], onDelete: SetNull)
   replays        WorkflowRun[]   @relation("RunReplays")
 
   @@index([workflowId])
   @@index([createdAt])
   @@index([replayOfId])
+  // Keyset pagination on the workspace runs list orders by (createdAt, id) desc.
+  @@index([createdAt, id])
 }
 
 /// Per-node result inside a WorkflowRun.
@@ -121,12 +156,32 @@ model NodeExecution {
   input      Json?
   output     Json?
   error      String?
+  /// How many attempts the engine made for this node within the run (>=1).
+  attempts   Int             @default(1)
   startedAt  DateTime?
   finishedAt DateTime?
 
   run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId])
+}
+
+/// Structured, correlation-scoped log line emitted while a run executes.
+/// Streamed live over Socket.IO and retained for the run's observability view.
+model RunLog {
+  id      String   @id @default(cuid())
+  runId   String
+  /// Monotonic per-run sequence number, for stable ordering + incremental fetch.
+  seq     Int
+  level   String
+  message String
+  /// The node this line concerns, when applicable (null for run-level lines).
+  nodeId  String?
+  ts      DateTime @default(now())
+
+  run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, seq])
 }
 
 /// Encrypted secret used by workflow nodes (e.g. API keys). `encryptedData` holds the

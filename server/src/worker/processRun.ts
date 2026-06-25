@@ -1,5 +1,5 @@
 import type { WorkflowDefinition } from "../dag/types";
-import type { RunEventSink } from "../engine/events";
+import type { RunEventSink, RunLogSink } from "../engine/events";
 import type { RunRecord, RunRecorder } from "../engine/persistence";
 import type { NodeExecutorRegistry } from "../engine/registry";
 import { runWorkflow } from "../engine/runWorkflow";
@@ -29,6 +29,14 @@ export interface ProcessRunDeps {
   limits?: NodeLimits;
   fetchImpl?: typeof fetch;
   onEvent?: RunEventSink;
+  /** Streams structured log lines as the run executes (persistence is via the recorder). */
+  onLog?: RunLogSink;
+  /**
+   * Called once a run has *terminally* failed (retries exhausted / dead-letter).
+   * Used to dispatch the workflow's failure notification. Best-effort: its own
+   * failure must never disrupt dead-letter handling.
+   */
+  onTerminalFailure?: (runId: string) => Promise<void>;
 }
 
 /**
@@ -47,11 +55,17 @@ export async function processRun(runId: string, deps: ProcessRunDeps): Promise<R
   const workflow = await deps.loadWorkflow(run.workflowId);
   if (!workflow) throw new Error(`Workflow ${run.workflowId} not found for run ${runId}`);
 
+  // Prefer the definition snapshotted onto the run at enqueue time, so a draft
+  // edit between enqueue and execution can never change what this run executes.
+  // `loadWorkflow` still supplies the workspace id (and a fallback definition for
+  // pre-snapshot runs).
+  const definition = run.definition ?? workflow.definition;
+
   return runWorkflow({
     runId,
     workflowId: run.workflowId,
     workspaceId: workflow.workspaceId,
-    definition: workflow.definition,
+    definition,
     trigger: { type: run.trigger, payload: run.payload },
     registry: deps.registry,
     recorder: deps.recorder,
@@ -62,6 +76,7 @@ export async function processRun(runId: string, deps: ProcessRunDeps): Promise<R
     limits: deps.limits,
     fetchImpl: deps.fetchImpl,
     onEvent: deps.onEvent,
+    onLog: deps.onLog,
   });
 }
 
@@ -83,7 +98,7 @@ export async function runJob(runId: string, deps: ProcessRunDeps): Promise<RunRe
  * as `failed` with the full error context, and a terminal run:finished is emitted.
  */
 export async function handleJobFailure(
-  deps: Pick<ProcessRunDeps, "recorder" | "onEvent">,
+  deps: Pick<ProcessRunDeps, "recorder" | "onEvent" | "onTerminalFailure">,
   params: { runId: string; attemptsMade: number; maxAttempts: number; error: Error },
 ): Promise<void> {
   const { runId, attemptsMade, maxAttempts, error } = params;
@@ -93,6 +108,15 @@ export async function handleJobFailure(
     const message = `Run failed after ${attemptsMade} attempt(s): ${error.message}`;
     await deps.recorder.finishRun(runId, { status: "failed", error: message });
     deps.onEvent?.({ type: "run:finished", runId, status: "failed", error: message });
+    // Fire the failure alert after the run is recorded failed, so the notifier
+    // reads final state. Never let a notification error mask the dead-letter.
+    if (deps.onTerminalFailure) {
+      try {
+        await deps.onTerminalFailure(runId);
+      } catch {
+        // swallowed — alerting is best-effort
+      }
+    }
   } else {
     await deps.recorder.requeueRun(runId);
   }

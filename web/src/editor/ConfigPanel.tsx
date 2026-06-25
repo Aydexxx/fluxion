@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { useEditor } from "./editorStore";
-import { getConfigForm } from "./configForms";
+import { sendEditing, usePresence } from "./presence";
+import { getConfigForm, ErrorHandlingForm } from "./configForms";
 import { categoryAccent, getNodeSpec } from "./nodeCatalog";
 import { JsonBlock, StatusBadge } from "./RunBits";
 import type { FluxNode } from "./graph";
@@ -71,6 +72,14 @@ function PanelInner({
 
   const tab = useEditor((s) => s.inspectorTab);
   const setTab = useEditor((s) => s.setInspectorTab);
+
+  // Soft-lock: tell peers we're editing this node's config (and release on close
+  // or when switching away from the Config tab). Non-blocking — purely advisory.
+  useEffect(() => {
+    sendEditing(tab === "config" ? node.id : null);
+    return () => sendEditing(null);
+  }, [node.id, tab]);
+
   const hasRun = useEditor((s) => s.activeRun !== null);
   const execution = useEditor(
     (s) => s.activeRun?.nodeExecutions.find((e) => e.nodeId === node.id) ?? null,
@@ -124,14 +133,24 @@ function PanelInner({
 
       {/* body */}
       <div className="flex-1 overflow-y-auto p-4">
+        <EditLockBanner nodeId={node.id} />
         {tab === "config" ? (
-          Form ? (
-            // Form is a stable lookup from a static registry (see getConfigForm above), not a fresh component.
-            // eslint-disable-next-line react-hooks/static-components
-            <Form nodeId={node.id} config={node.data.config} onChange={onConfig} />
-          ) : (
-            <p className="text-sm text-muted">This node has no configurable settings.</p>
-          )
+          <div className="space-y-5">
+            {Form ? (
+              // Form is a stable lookup from a static registry (see getConfigForm above), not a fresh component.
+              // eslint-disable-next-line react-hooks/static-components
+              <Form nodeId={node.id} config={node.data.config} onChange={onConfig} />
+            ) : (
+              <p className="text-sm text-muted">This node has no configurable settings.</p>
+            )}
+            {/* Triggers don't run executors that fail in a catchable way; every other node gets error handling. */}
+            {spec.hasInput ? (
+              <div className="space-y-3 border-t border-white/8 pt-4">
+                <div className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Error handling</div>
+                <ErrorHandlingForm config={node.data.config} onChange={onConfig} canRoute={spec.hasOutput} />
+              </div>
+            ) : null}
+          </div>
         ) : tab === "test" ? (
           <TestNodeTab node={node} />
         ) : (
@@ -150,6 +169,37 @@ function PanelInner({
         </button>
       </div>
     </>
+  );
+}
+
+/**
+ * Non-blocking advisory shown when another collaborator is editing this same
+ * node, so two people don't silently clobber each other's config.
+ */
+function EditLockBanner({ nodeId }: { nodeId: string }) {
+  const lockedBy = usePresence((s) => {
+    for (const [socketId, editingId] of Object.entries(s.editing)) {
+      if (editingId === nodeId) return s.participants[socketId] ?? null;
+    }
+    return null;
+  });
+  if (!lockedBy) return null;
+
+  return (
+    <div
+      className="mb-4 flex items-center gap-2 rounded-lg border px-3 py-2 text-[12.5px] font-medium"
+      style={{
+        borderColor: `color-mix(in oklab, ${lockedBy.color} 45%, transparent)`,
+        background: `color-mix(in oklab, ${lockedBy.color} 12%, transparent)`,
+        color: lockedBy.color,
+      }}
+    >
+      <span className="relative flex size-2">
+        <span className="absolute inline-flex size-full animate-ping rounded-full opacity-60" style={{ background: lockedBy.color }} />
+        <span className="relative inline-flex size-2 rounded-full" style={{ background: lockedBy.color }} />
+      </span>
+      {lockedBy.name} is editing this node
+    </div>
   );
 }
 

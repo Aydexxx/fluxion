@@ -8,6 +8,7 @@ import { statusVisual, type NodeRunStatus } from "./runStatus";
 import { AlertIcon, CheckIcon, SpinnerIcon } from "../components/icons";
 
 function WorkflowNodeComponent({ id, data, selected }: NodeProps<FluxNode>) {
+  const reduce = useReducedMotion();
   const spec = getNodeSpec(data.nodeType);
   const accent = categoryAccent(data.nodeType);
   const Icon = spec.icon;
@@ -15,6 +16,7 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<FluxNode>) {
   // Driven live by the worker's per-node events (idle until this node starts).
   const runStatus = useEditor((s) => s.nodeRunStatus[id] ?? "idle");
   const active = runStatus !== "idle";
+  const running = runStatus === "running";
   const statusColor = statusVisual(runStatus).color;
 
   // A status ring (when there's a run result) takes visual priority over the selection ring.
@@ -31,6 +33,18 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<FluxNode>) {
           : "0 14px 40px -22px rgba(0,0,0,0.9), inset 0 1px 0 color-mix(in oklab, white 5%, transparent)",
       }}
     >
+      {/* Running aura — a slow breathing halo so an executing node reads as alive. */}
+      {running && !reduce ? (
+        <motion.div
+          aria-hidden
+          className="pointer-events-none absolute -inset-px rounded-[16px]"
+          style={{ boxShadow: `0 0 0 1.5px ${statusColor}, 0 0 22px -2px ${statusColor}` }}
+          initial={{ opacity: 0.35 }}
+          animate={{ opacity: [0.35, 0.85, 0.35] }}
+          transition={{ duration: 1.8, repeat: Infinity, ease: "easeInOut" }}
+        />
+      ) : null}
+
       {/* thin category accent line along the top edge */}
       <div
         className="absolute inset-x-3 top-0 h-px rounded-full"
@@ -41,6 +55,22 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<FluxNode>) {
 
       {spec.hasInput ? <Handle type="target" position={Position.Left} /> : null}
       {spec.hasOutput ? <Handle type="source" position={Position.Right} /> : null}
+      {/* Error output: edges from here run only when this node fails (try/catch). */}
+      {spec.hasInput && spec.hasOutput ? (
+        <Handle
+          id="error"
+          type="source"
+          position={Position.Bottom}
+          title="Error output — runs only on failure"
+          style={{
+            background: "#e0686b",
+            border: "2px solid var(--color-surface)",
+            width: 11,
+            height: 11,
+            boxShadow: "0 0 8px -1px #e0686b",
+          }}
+        />
+      ) : null}
 
       <div className="flex items-center gap-3 p-3.5">
         <div

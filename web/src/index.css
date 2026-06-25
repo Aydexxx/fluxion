@@ -137,6 +137,18 @@
     0% { transform: translate3d(0, 0, 0); }
     100% { transform: translate3d(-40px, -28px, 0); }
   }
+
+  /* Edge "current" flow used by the landing product preview. */
+  @keyframes flux-dash {
+    to { stroke-dashoffset: -24; }
+  }
+
+  /* Slow vertical drift for the landing hero's ambient light. */
+  @keyframes flux-float {
+    0% { transform: translate3d(0, 0, 0); }
+    50% { transform: translate3d(0, -10px, 0); }
+    100% { transform: translate3d(0, 0, 0); }
+  }
 }
 
 /* ───────────────────────────────────────────────────────────────────────────

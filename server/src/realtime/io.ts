@@ -7,10 +7,16 @@ import { verifyAccessToken } from "../services/jwt";
 import { requireWorkspaceMember, resolveWorkflowWorkspaceId } from "../services/authorization";
 import { prisma } from "../services/prisma";
 import { RUN_SUBSCRIBE, RUN_UNSUBSCRIBE, runRoom } from "./events";
+import { registerPresenceHandlers, type PresenceDeps, type SocketData } from "./presence";
 
-interface SocketData {
-  userId: string;
-}
+/** Real presence dependencies: authorize against workspace membership, resolve names from the DB. */
+const presenceDeps: PresenceDeps = {
+  authorize: (workflowId, userId) => canAccessWorkflow(workflowId, userId),
+  resolveName: async (userId) => {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
+    return user?.name ?? "Someone";
+  },
+};
 
 /**
  * Attaches a Socket.IO server to the API's HTTP server.
@@ -54,6 +60,9 @@ export function attachRealtime(httpServer: HttpServer): IOServer {
     socket.on(RUN_UNSUBSCRIBE, (payload: { runId?: string }) => {
       if (payload?.runId) void socket.leave(runRoom(payload.runId));
     });
+
+    // Real-time multi-user awareness (live cursors, selection, edit locks, graph sync).
+    registerPresenceHandlers(io, socket, presenceDeps);
   });
 
   return io;
@@ -63,7 +72,16 @@ async function canAccessRun(runId: string, userId: string): Promise<boolean> {
   try {
     const run = await prisma.workflowRun.findUnique({ where: { id: runId }, select: { workflowId: true } });
     if (!run) return false;
-    const workspaceId = await resolveWorkflowWorkspaceId(run.workflowId);
+    return await canAccessWorkflow(run.workflowId, userId);
+  } catch {
+    return false;
+  }
+}
+
+/** True when `userId` is a member of the workspace that owns `workflowId`. */
+async function canAccessWorkflow(workflowId: string, userId: string): Promise<boolean> {
+  try {
+    const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
     await requireWorkspaceMember(workspaceId, userId);
     return true;
   } catch {

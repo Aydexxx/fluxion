@@ -6,6 +6,7 @@ import analyticsRoutes from "./routes/analytics.routes";
 import credentialRoutes from "./routes/credentials.routes";
 import healthRoutes from "./routes/health.routes";
 import runRoutes from "./routes/runs.routes";
+import templateRoutes from "./routes/templates.routes";
 import webhookRoutes from "./routes/webhooks.routes";
 import workflowRoutes from "./routes/workflows.routes";
 import workspaceRoutes from "./routes/workspaces.routes";
@@ -42,6 +43,7 @@ export function createApp(): Express {
   app.use("/workspaces", workspaceRoutes);
   app.use("/credentials", credentialRoutes);
   app.use("/workflows", workflowRoutes);
+  app.use("/templates", templateRoutes);
   app.use("/runs", runRoutes);
   app.use("/analytics", analyticsRoutes);
   app.use("/webhooks", webhookRoutes);

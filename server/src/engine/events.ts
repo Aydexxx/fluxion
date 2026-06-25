@@ -16,3 +16,22 @@ export type RunEventSink = (event: RunEvent) => void;
 
 /** No-op sink for the standalone/synchronous path and tests that don't assert events. */
 export const noopEventSink: RunEventSink = () => {};
+
+export type RunLogLevel = "debug" | "info" | "warn" | "error";
+
+/**
+ * A single structured log line emitted while a run executes. `seq` is a
+ * monotonic per-run counter assigned by the orchestrator, giving the UI stable
+ * ordering and a cursor for incremental fetches. `nodeId` is set for node-scoped
+ * lines and null for run-level ones.
+ */
+export interface RunLogEntry {
+  seq: number;
+  ts: string;
+  level: RunLogLevel;
+  message: string;
+  nodeId: string | null;
+}
+
+/** Receives live log lines for streaming (the worker wires this to Socket.IO). */
+export type RunLogSink = (runId: string, entry: RunLogEntry) => void;

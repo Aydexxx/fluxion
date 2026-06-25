@@ -42,6 +42,17 @@ export interface WorkflowDefinition {
   edges: FlowEdgeDef[];
 }
 
+/** A prebuilt example workflow shown in the template gallery (GET /templates). */
+export interface TemplateSummary {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  /** Node types used, in first-appearance order, for the card's chips. */
+  nodeTypes: string[];
+  definition: WorkflowDefinition;
+}
+
 /** Summary shape returned by GET /workflows (no definition). */
 export interface WorkflowSummary {
   id: string;
@@ -53,15 +64,78 @@ export interface WorkflowSummary {
   updatedAt: string;
 }
 
+/** Workflow-level failure-alert config: notify a channel when a run fails. */
+export interface FailureNotifyConfig {
+  channel: "slack" | "email";
+  credentialId: string;
+  /** Recipient address — email only. */
+  to?: string;
+}
+
 /** Full shape returned by GET /workflows/:id and POST /workflows. */
 export interface Workflow extends WorkflowSummary {
+  /** The draft — what the editor edits. */
   definition: WorkflowDefinition;
+  /** What active webhook/schedule triggers run. Null until first publish. */
+  publishedDefinition: WorkflowDefinition | null;
+  /** True when the draft differs from what's published. */
+  hasUnpublishedChanges: boolean;
+  /** Currently-published version number, or null if never published. */
+  publishedVersion: number | null;
+  /** Failure-alert config, or null when no alerts are configured. */
+  failureNotify: FailureNotifyConfig | null;
   /** Token for this workflow's inbound webhook URL (/webhooks/:token). */
   webhookToken: string | null;
 }
 
 export interface UpdateWorkflowResponse extends Workflow {
   warnings: string[];
+}
+
+/* ── Versioning ─────────────────────────────────────────────────────────── */
+
+/** A single node that differs between two definitions. */
+export interface ChangedNode {
+  id: string;
+  type: string;
+  changes: Array<"type" | "config" | "position">;
+}
+
+/** A non-visual summary of how one definition differs from another. */
+export interface DefinitionDiff {
+  addedNodes: Array<{ id: string; type: string }>;
+  removedNodes: Array<{ id: string; type: string }>;
+  changedNodes: ChangedNode[];
+  edgesAdded: number;
+  edgesRemoved: number;
+  identical: boolean;
+}
+
+/** A published version in the history list (GET /workflows/:id/versions). */
+export interface WorkflowVersionSummary {
+  id: string;
+  version: number;
+  name: string;
+  note: string | null;
+  authorName: string | null;
+  createdAt: string;
+  nodeCount: number;
+  edgeCount: number;
+  /** Diff vs the version before it (vs empty for v1). */
+  diff: DefinitionDiff;
+  /** True for the highest version — the one currently live. */
+  isCurrent: boolean;
+}
+
+/** A version with its full definition (GET /workflows/:id/versions/:versionId). */
+export interface WorkflowVersionDetail extends WorkflowVersionSummary {
+  definition: WorkflowDefinition;
+}
+
+/** Response from publish + rollback: the updated workflow and the new version. */
+export interface PublishResponse {
+  workflow: Workflow;
+  version: WorkflowVersionSummary;
 }
 
 /* ── Execution / runs (Phase 3) ─────────────────────────────────────────── */
@@ -77,8 +151,21 @@ export interface NodeExecution {
   input: unknown;
   output: unknown;
   error: string | null;
+  /** Number of attempts the engine made for this node (>=1). */
+  attempts: number;
   startedAt: string | null;
   finishedAt: string | null;
+}
+
+export type RunLogLevel = "debug" | "info" | "warn" | "error";
+
+/** A single structured log line for a run (correlation id = the run id). */
+export interface RunLogEntry {
+  seq: number;
+  ts: string;
+  level: RunLogLevel;
+  message: string;
+  nodeId: string | null;
 }
 
 /** Full run returned by POST /workflows/:id/run and GET /runs/:id. */
@@ -159,13 +246,25 @@ export interface WorkspaceRunSummary extends RunSummary {
   workflowName: string;
   createdAt: string | null;
   replayOfId: string | null;
+  /** For a failed run, the node that failed (dead-letter culprit). Null otherwise. */
+  failingNode: string | null;
 }
 
 export interface RunFilters {
   status?: ExecutionStatus;
   workflowId?: string;
+  trigger?: RunTriggerType;
+  /** Free-text match against workflow name or run id. */
+  search?: string;
   from?: string;
   to?: string;
+}
+
+/** One page of workspace runs plus the keyset cursor for the next page (infinite scroll). */
+export interface WorkspaceRunsPage {
+  runs: WorkspaceRunSummary[];
+  /** Pass back as `cursor` to fetch the next page; null when there are no more. */
+  nextCursor: string | null;
 }
 
 /* ── Analytics ──────────────────────────────────────────────────────────── */

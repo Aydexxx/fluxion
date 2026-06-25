@@ -88,3 +88,8 @@ jobs:
 
       - name: Test
         run: npm test --workspace=web
+
+      # Production build — catches landing-page/asset/bundling regressions the
+      # unit tests don't (the web suite runs in jsdom, not a real bundle).
+      - name: Build
+        run: npm run build --workspace=web

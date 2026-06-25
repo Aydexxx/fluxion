@@ -1,4 +1,6 @@
 import type { Prisma, PrismaClient } from "../generated/prisma/client";
+import type { WorkflowDefinition } from "../dag/types";
+import type { RunLogEntry, RunLogLevel } from "./events";
 import type { NodeExecutionRecord, RunRecord, RunRecorder } from "./persistence";
 import type { ExecutionStatusValue, RunTriggerValue } from "./types";
 
@@ -20,6 +22,7 @@ export class PrismaRunRecorder implements RunRecorder {
     workflowId: string;
     trigger: RunTriggerValue;
     payload: unknown;
+    definition?: WorkflowDefinition | null;
     replayOfId?: string | null;
   }): Promise<string> {
     const run = await this.prisma.workflowRun.create({
@@ -28,6 +31,7 @@ export class PrismaRunRecorder implements RunRecorder {
         trigger: data.trigger,
         status: "queued",
         payload: toJson(data.payload),
+        definition: data.definition == null ? undefined : toJson(data.definition),
         replayOfId: data.replayOfId ?? null,
       },
       select: { id: true },
@@ -36,8 +40,9 @@ export class PrismaRunRecorder implements RunRecorder {
   }
 
   async beginRun(runId: string): Promise<void> {
-    // Discard a previous attempt's node executions so a retry starts clean.
+    // Discard a previous attempt's node executions + logs so a retry starts clean.
     await this.prisma.nodeExecution.deleteMany({ where: { runId } });
+    await this.prisma.runLog.deleteMany({ where: { runId } });
     await this.prisma.workflowRun.update({
       where: { id: runId },
       data: { status: "running", startedAt: new Date(), finishedAt: null, error: null },
@@ -67,7 +72,7 @@ export class PrismaRunRecorder implements RunRecorder {
 
   async finishNodeExecution(
     id: string,
-    data: { status: ExecutionStatusValue; output?: unknown; error?: string | null },
+    data: { status: ExecutionStatusValue; output?: unknown; error?: string | null; attempts?: number },
   ): Promise<void> {
     await this.prisma.nodeExecution.update({
       where: { id },
@@ -75,6 +80,7 @@ export class PrismaRunRecorder implements RunRecorder {
         status: data.status,
         output: data.output === undefined ? undefined : toJson(data.output),
         error: data.error ?? null,
+        attempts: data.attempts,
         finishedAt: new Date(),
       },
     });
@@ -85,6 +91,33 @@ export class PrismaRunRecorder implements RunRecorder {
       where: { id },
       data: { status: data.status, error: data.error ?? null, finishedAt: new Date() },
     });
+  }
+
+  async appendRunLog(runId: string, entry: RunLogEntry): Promise<void> {
+    await this.prisma.runLog.create({
+      data: {
+        runId,
+        seq: entry.seq,
+        level: entry.level,
+        message: entry.message,
+        nodeId: entry.nodeId,
+        ts: new Date(entry.ts),
+      },
+    });
+  }
+
+  async listRunLogs(runId: string, afterSeq = 0): Promise<RunLogEntry[]> {
+    const rows = await this.prisma.runLog.findMany({
+      where: { runId, seq: { gt: afterSeq } },
+      orderBy: { seq: "asc" },
+    });
+    return rows.map((row) => ({
+      seq: row.seq,
+      ts: row.ts.toISOString(),
+      level: row.level as RunLogLevel,
+      message: row.message,
+      nodeId: row.nodeId,
+    }));
   }
 
   async getRun(id: string): Promise<RunRecord> {
@@ -100,6 +133,7 @@ export class PrismaRunRecorder implements RunRecorder {
       input: node.input ?? null,
       output: node.output ?? null,
       error: node.error,
+      attempts: node.attempts,
       startedAt: node.startedAt?.toISOString() ?? null,
       finishedAt: node.finishedAt?.toISOString() ?? null,
     }));
@@ -114,6 +148,7 @@ export class PrismaRunRecorder implements RunRecorder {
       createdAt: run.createdAt?.toISOString() ?? null,
       startedAt: run.startedAt?.toISOString() ?? null,
       finishedAt: run.finishedAt?.toISOString() ?? null,
+      definition: run.definition == null ? null : (run.definition as unknown as WorkflowDefinition),
       replayOfId: run.replayOfId ?? null,
       nodeExecutions,
     };

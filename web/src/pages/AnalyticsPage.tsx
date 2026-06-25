@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import {
   Area,
@@ -17,8 +17,8 @@ import { useAuth } from "../store/auth";
 import { analyticsApi, errorMessage } from "../lib/api";
 import type { AnalyticsResult } from "../lib/types";
 import { TopNav } from "../components/TopNav";
-import { SpinnerIcon } from "../components/icons";
-import { toast } from "../store/toasts";
+import { ChartIcon } from "../components/icons";
+import { EmptyState, ErrorState, LoadingState } from "../components/ui/states";
 
 const SUCCESS = "#34d0a8";
 const FAILED = "#ff6b6b";
@@ -49,19 +49,21 @@ export function AnalyticsPage() {
   const [rangeKey, setRangeKey] = useState("30");
   const [data, setData] = useState<AnalyticsResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!workspace) return;
+  const load = useCallback(() => {
+    if (!workspace) return () => {};
     let alive = true;
     const days = RANGES.find((r) => r.key === rangeKey)?.days ?? 30;
     const from = new Date(Date.now() - days * 86_400_000).toISOString();
     void (async () => {
       setLoading(true);
+      setError(null);
       try {
         const d = await analyticsApi.get(workspace.id, { from });
         if (alive) setData(d);
       } catch (err) {
-        if (alive) toast.error(errorMessage(err, "Could not load analytics"));
+        if (alive) setError(errorMessage(err, "Could not load analytics"));
       } finally {
         if (alive) setLoading(false);
       }
@@ -70,6 +72,8 @@ export function AnalyticsPage() {
       alive = false;
     };
   }, [workspace, rangeKey]);
+
+  useEffect(() => load(), [load]);
 
   const pieData = data ? [
     { name: "Success", value: data.summary.success, color: SUCCESS },
@@ -106,12 +110,16 @@ export function AnalyticsPage() {
           </div>
         </div>
 
-        {loading && !data ? (
-          <div className="flex items-center justify-center py-24 text-muted">
-            <SpinnerIcon className="animate-spin text-[20px]" />
-          </div>
-        ) : !data ? (
-          <p className="py-24 text-center text-sm text-muted">No analytics available.</p>
+        {error && !data ? (
+          <ErrorState title="Couldn’t load analytics" message={error} onRetry={load} />
+        ) : loading && !data ? (
+          <LoadingState label="Crunching your run history…" />
+        ) : !data || data.summary.total === 0 ? (
+          <EmptyState
+            icon={<ChartIcon />}
+            title="No analytics yet"
+            description="Once your workflows start running, you’ll see success rates, throughput over time, and your most error-prone nodes here."
+          />
         ) : (
           <motion.div
             initial={reduce ? false : { opacity: 0, y: 10 }}

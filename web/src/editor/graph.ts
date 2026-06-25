@@ -60,6 +60,8 @@ export function definitionToFlow(def: WorkflowDefinition | undefined): { nodes: 
     target: e.target,
     sourceHandle: e.sourceHandle ?? null,
     targetHandle: e.targetHandle ?? null,
+    // Error-path edges render red so try/catch branches are obvious.
+    ...(e.sourceHandle === "error" ? { style: { stroke: "#e0686b" }, data: { error: true } } : {}),
   }));
 
   return { nodes, edges };

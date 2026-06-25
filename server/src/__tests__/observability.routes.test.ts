@@ -65,7 +65,8 @@ async function drain(runId: string) {
     recorder: new PrismaRunRecorder(prisma),
     loadWorkflow: async (workflowId) => {
       const wf = await prisma.workflow.findUnique({ where: { id: workflowId } });
-      return wf ? { definition: wf.definition as unknown as WorkflowDefinition, workspaceId: wf.workspaceId } : null;
+      // Fallback only — processRun prefers the run's own snapshot. Manual runs snapshot the draft.
+      return wf ? { definition: wf.draftDefinition as unknown as WorkflowDefinition, workspaceId: wf.workspaceId } : null;
     },
     registry: createDefaultRegistry(),
     llm: env.llm,
@@ -102,7 +103,7 @@ describe("POST /runs/:id/replay", () => {
 });
 
 describe("GET /runs (workspace runs dashboard)", () => {
-  it("lists runs across the workspace with workflow names + lineage, newest first", async () => {
+  it("returns a page of runs with workflow names + lineage, newest first", async () => {
     const owner = await registerUser("dash@example.com");
     const workflowId = await createFlow(owner.token, owner.workspaceId);
     const r1 = await startRun(owner.token, workflowId, { topic: "one" });
@@ -113,9 +114,10 @@ describe("GET /runs (workspace runs dashboard)", () => {
     const res = await request(app).get("/runs").query({ workspaceId: owner.workspaceId }).set(...authHeader(owner.token));
 
     expect(res.status).toBe(200);
-    expect(res.body).toHaveLength(2);
-    expect(res.body[0]).toMatchObject({ workflowName: "Flow", status: "success" });
-    expect(res.body[0]).toHaveProperty("replayOfId");
+    expect(res.body.runs).toHaveLength(2);
+    expect(res.body.nextCursor).toBeNull(); // only one page
+    expect(res.body.runs[0]).toMatchObject({ workflowName: "Flow", status: "success" });
+    expect(res.body.runs[0]).toHaveProperty("replayOfId");
   });
 
   it("filters by status", async () => {
@@ -126,8 +128,53 @@ describe("GET /runs (workspace runs dashboard)", () => {
     await drain(await startRun(owner.token, badFlow));
 
     const failed = await request(app).get("/runs").query({ workspaceId: owner.workspaceId, status: "failed" }).set(...authHeader(owner.token));
-    expect(failed.body).toHaveLength(1);
-    expect(failed.body[0].status).toBe("failed");
+    expect(failed.body.runs).toHaveLength(1);
+    expect(failed.body.runs[0].status).toBe("failed");
+  });
+
+  it("filters by trigger type", async () => {
+    const owner = await registerUser("dashtrigger@example.com");
+    const flow = await createFlow(owner.token, owner.workspaceId);
+    await drain(await startRun(owner.token, flow));
+
+    const manual = await request(app).get("/runs").query({ workspaceId: owner.workspaceId, trigger: "manual" }).set(...authHeader(owner.token));
+    expect(manual.body.runs).toHaveLength(1);
+    const scheduled = await request(app).get("/runs").query({ workspaceId: owner.workspaceId, trigger: "schedule" }).set(...authHeader(owner.token));
+    expect(scheduled.body.runs).toHaveLength(0);
+  });
+
+  it("searches by workflow name", async () => {
+    const owner = await registerUser("dashsearch@example.com");
+    const aId = await request(app).post("/workflows").set(...authHeader(owner.token)).send({ workspaceId: owner.workspaceId, name: "Invoices" });
+    await request(app).put(`/workflows/${aId.body.id}`).set(...authHeader(owner.token)).send({ definition: okDef });
+    const bId = await request(app).post("/workflows").set(...authHeader(owner.token)).send({ workspaceId: owner.workspaceId, name: "Newsletter" });
+    await request(app).put(`/workflows/${bId.body.id}`).set(...authHeader(owner.token)).send({ definition: okDef });
+    await drain(await startRun(owner.token, aId.body.id));
+    await drain(await startRun(owner.token, bId.body.id));
+
+    const res = await request(app).get("/runs").query({ workspaceId: owner.workspaceId, search: "invoic" }).set(...authHeader(owner.token));
+    expect(res.body.runs).toHaveLength(1);
+    expect(res.body.runs[0].workflowName).toBe("Invoices");
+  });
+
+  it("paginates with a keyset cursor, no overlap between pages", async () => {
+    const owner = await registerUser("dashpage@example.com");
+    const flow = await createFlow(owner.token, owner.workspaceId);
+    for (let i = 0; i < 5; i += 1) await drain(await startRun(owner.token, flow, { i }));
+
+    const page1 = await request(app).get("/runs").query({ workspaceId: owner.workspaceId, limit: 2 }).set(...authHeader(owner.token));
+    expect(page1.body.runs).toHaveLength(2);
+    expect(page1.body.nextCursor).toBeTruthy();
+
+    const page2 = await request(app)
+      .get("/runs")
+      .query({ workspaceId: owner.workspaceId, limit: 2, cursor: page1.body.nextCursor })
+      .set(...authHeader(owner.token));
+    expect(page2.body.runs).toHaveLength(2);
+
+    const ids1 = page1.body.runs.map((r: { id: string }) => r.id);
+    const ids2 = page2.body.runs.map((r: { id: string }) => r.id);
+    expect(ids1.filter((id: string) => ids2.includes(id))).toEqual([]); // disjoint pages
   });
 
   it("rejects a missing workspaceId (validation) and a bad status", async () => {
@@ -136,6 +183,49 @@ describe("GET /runs (workspace runs dashboard)", () => {
     expect(
       (await request(app).get("/runs").query({ workspaceId: owner.workspaceId, status: "nope" }).set(...authHeader(owner.token))).status,
     ).toBe(400);
+  });
+});
+
+describe("GET /runs/:id/logs", () => {
+  it("returns a run's structured logs in sequence order", async () => {
+    const owner = await registerUser("logs@example.com");
+    const workflowId = await createFlow(owner.token, owner.workspaceId);
+    const runId = await startRun(owner.token, workflowId, { topic: "comets" });
+    await drain(runId);
+
+    const res = await request(app).get(`/runs/${runId}/logs`).set(...authHeader(owner.token));
+
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body.length).toBeGreaterThan(0);
+    expect(res.body[0]).toMatchObject({ seq: 1, level: expect.any(String), message: expect.any(String) });
+    // Monotonic seq, and the final line records the run outcome.
+    const seqs = res.body.map((l: { seq: number }) => l.seq);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(res.body.at(-1).message).toMatch(/Run finished/);
+  });
+
+  it("supports incremental fetch via ?after=", async () => {
+    const owner = await registerUser("logsafter@example.com");
+    const workflowId = await createFlow(owner.token, owner.workspaceId);
+    const runId = await startRun(owner.token, workflowId);
+    await drain(runId);
+
+    const all = await request(app).get(`/runs/${runId}/logs`).set(...authHeader(owner.token));
+    const tail = await request(app).get(`/runs/${runId}/logs`).query({ after: 2 }).set(...authHeader(owner.token));
+    expect(tail.body.every((l: { seq: number }) => l.seq > 2)).toBe(true);
+    expect(tail.body).toHaveLength(all.body.length - 2);
+  });
+
+  it("forbids a non-member", async () => {
+    const owner = await registerUser("logsowner@example.com");
+    const outsider = await registerUser("logsoutsider@example.com");
+    const workflowId = await createFlow(owner.token, owner.workspaceId);
+    const runId = await startRun(owner.token, workflowId);
+    await drain(runId);
+
+    const res = await request(app).get(`/runs/${runId}/logs`).set(...authHeader(outsider.token));
+    expect(res.status).toBe(403);
   });
 });
 

@@ -35,12 +35,26 @@ export const createWorkflowSchema = z.object({
   description: z.string().trim().max(2000, "Description is too long").optional(),
 });
 
+/** Workflow-level failure-alert config. `null` clears it. Email requires a `to`. */
+export const failureNotifySchema = z
+  .object({
+    channel: z.enum(["slack", "email"]),
+    credentialId: z.string().min(1, "A credential is required"),
+    to: z.string().trim().max(320).optional(),
+  })
+  .refine((v) => v.channel !== "email" || (v.to && v.to.trim() !== ""), {
+    message: "Email alerts need a recipient address",
+    path: ["to"],
+  })
+  .nullable();
+
 export const updateWorkflowSchema = z
   .object({
     name: z.string().trim().min(1, "Name is required").max(150, "Name is too long").optional(),
     description: z.string().trim().max(2000, "Description is too long").nullable().optional(),
     isActive: z.boolean().optional(),
     definition: workflowDefinitionSchema.optional(),
+    failureNotify: failureNotifySchema.optional(),
   })
   .refine(hasAtLeastOneField, { message: "At least one field must be provided" });
 
@@ -66,6 +80,12 @@ export const testNodeSchema = z.object({
   sources: z.record(z.string(), z.unknown()).optional(),
 });
 
+/** Body for publishing the current draft. An optional short note is stored on the version. */
+export const publishWorkflowSchema = z.object({
+  note: z.string().trim().max(200, "Note is too long").optional(),
+});
+
+export type PublishWorkflowInput = z.infer<typeof publishWorkflowSchema>;
 export type RunWorkflowInput = z.infer<typeof runWorkflowSchema>;
 export type TestNodeInput = z.infer<typeof testNodeSchema>;
 export type WorkflowDefinitionInput = z.infer<typeof workflowDefinitionSchema>;

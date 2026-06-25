@@ -198,7 +198,10 @@ describe("PUT /workflows/:id", () => {
     expect(res.body.warnings).toEqual([]);
   });
 
-  it("rejects a cyclic definition", async () => {
+  // Drafts are work-in-progress and always savable; structural validity is
+  // enforced at *publish* time instead (see the publish gate below), so editing
+  // a live workflow stays frictionless.
+  it("saves a cyclic draft but refuses to publish it", async () => {
     const owner = await registerUser("Ada Lovelace", "ada12@example.com");
     const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
     const cyclic = {
@@ -214,17 +217,22 @@ describe("PUT /workflows/:id", () => {
       ],
     };
 
-    const res = await request(app)
+    const saved = await request(app)
       .put(`/workflows/${created.body.id}`)
       .set(...authHeader(owner.token))
       .send({ definition: cyclic });
+    expect(saved.status).toBe(200);
 
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe("VALIDATION_ERROR");
-    expect(res.body.error.message).toMatch(/cycle/i);
+    const published = await request(app)
+      .post(`/workflows/${created.body.id}/publish`)
+      .set(...authHeader(owner.token))
+      .send({});
+    expect(published.status).toBe(400);
+    expect(published.body.error.code).toBe("VALIDATION_ERROR");
+    expect(published.body.error.message).toMatch(/cycle/i);
   });
 
-  it("rejects a definition with an edge referencing a missing node", async () => {
+  it("saves a draft with a dangling edge but refuses to publish it", async () => {
     const owner = await registerUser("Ada Lovelace", "ada13@example.com");
     const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
     const broken = {
@@ -232,13 +240,18 @@ describe("PUT /workflows/:id", () => {
       edges: [{ id: "e1", source: "n1", target: "missing" }],
     };
 
-    const res = await request(app)
+    const saved = await request(app)
       .put(`/workflows/${created.body.id}`)
       .set(...authHeader(owner.token))
       .send({ definition: broken });
+    expect(saved.status).toBe(200);
 
-    expect(res.status).toBe(400);
-    expect(res.body.error.message).toMatch(/unknown target node "missing"/);
+    const published = await request(app)
+      .post(`/workflows/${created.body.id}/publish`)
+      .set(...authHeader(owner.token))
+      .send({});
+    expect(published.status).toBe(400);
+    expect(published.body.error.message).toMatch(/unknown target node "missing"/);
   });
 
   it("saves successfully but reports a warning for a disconnected action node", async () => {
@@ -273,6 +286,43 @@ describe("PUT /workflows/:id", () => {
       .send({ name: "Hijacked" });
 
     expect(res.status).toBe(403);
+  });
+});
+
+describe("PUT /workflows/:id — failure alert config", () => {
+  it("saves, returns, and clears a failure-alert config", async () => {
+    const owner = await registerUser("Ada Lovelace", "ada-fn1@example.com");
+    const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
+
+    const set = await request(app)
+      .put(`/workflows/${created.body.id}`)
+      .set(...authHeader(owner.token))
+      .send({ failureNotify: { channel: "slack", credentialId: "cred_1" } });
+    expect(set.status).toBe(200);
+    expect(set.body.failureNotify).toEqual({ channel: "slack", credentialId: "cred_1" });
+
+    const fetched = await request(app).get(`/workflows/${created.body.id}`).set(...authHeader(owner.token));
+    expect(fetched.body.failureNotify).toMatchObject({ channel: "slack", credentialId: "cred_1" });
+
+    const cleared = await request(app)
+      .put(`/workflows/${created.body.id}`)
+      .set(...authHeader(owner.token))
+      .send({ failureNotify: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.failureNotify).toBeNull();
+  });
+
+  it("rejects an email alert with no recipient", async () => {
+    const owner = await registerUser("Ada Lovelace", "ada-fn2@example.com");
+    const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
+
+    const res = await request(app)
+      .put(`/workflows/${created.body.id}`)
+      .set(...authHeader(owner.token))
+      .send({ failureNotify: { channel: "email", credentialId: "cred_1" } });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe("VALIDATION_ERROR");
   });
 });
 

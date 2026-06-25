@@ -28,10 +28,21 @@ anywhere else. Failed runs retry with backoff and eventually dead-letter
 without crashing the worker.
 
 As the worker executes a run, it pushes lifecycle events (`run:started`,
-`node:started`, `node:finished`, `run:finished`) over **Socket.IO**, scoped to
-a per-run room and fanned out across processes via a Redis adapter. The editor
-subscribes to its active run's room and updates each node's status pill on
-the canvas in real time — no polling.
+`node:started`, `node:finished`, `run:finished`) **and structured log lines**
+over **Socket.IO**, scoped to a per-run room and fanned out across processes via
+a Redis adapter. The editor subscribes to its active run's room and updates each
+node's status pill on the canvas in real time — no polling — while the run-detail
+view tails the same stream into a live timeline and log console.
+
+The same Socket.IO layer carries **ephemeral presence** for real-time
+collaboration: open editors join a per-*workflow* room and broadcast cursors,
+selection, edit locks, and live graph edits to each other (see
+[Real-time collaboration](#real-time-collaboration)).
+
+Editing only ever mutates a workflow's **draft**; publishing snapshots an
+immutable **version** and promotes it to what triggers actually run, so the live
+automation is decoupled from in-progress edits and any past version can be
+previewed or rolled back (see [Versioning](#workflow-versioning)).
 
 Workflows can also start from an inbound **webhook** (an unguessable
 per-workflow URL) or a **cron schedule** (BullMQ job schedulers reconciled
@@ -71,6 +82,18 @@ against each workflow's `trigger.schedule` nodes), in addition to a manual
   - *AI:* a single LLM call, and a multi-step tool-using agent
   - *Logic:* condition (branching), loop/iterate, filter
   - *Output:* response
+- **Visual data mapping** — a data picker reads the live shape of every upstream
+  node's output (and the trigger payload) so you point-and-click `{{references}}`
+  instead of guessing field paths, and **test a single node in isolation**
+  against real or pinned sample data without running the whole graph.
+- **Workflow versioning** — a draft/publish model: edits touch only the draft;
+  publishing snapshots an immutable, authored version; any version can be
+  previewed read-only and rolled back. See [Versioning](#workflow-versioning).
+- **Error handling** — per-node retry with backoff and an explicit on-error
+  policy (*stop* / *continue* / *route to an error branch*) for try/catch-style
+  flows, plus optional **failure alerts** (Slack/email) when a run dead-letters.
+- **Templates gallery** — one-click, pre-wired example workflows with sample
+  data baked in, so a new workflow runs the moment it opens.
 - **Execution engine** — topological DAG execution, `{{template}}`
   interpolation across trigger payload + upstream outputs, per-node timeouts,
   and full run/node-execution history for replay and debugging.
@@ -79,6 +102,15 @@ against each workflow's `trigger.schedule` nodes), in addition to a manual
   independently scalable worker concurrency.
 - **Live run status** — Socket.IO push updates so the canvas reflects a run's
   progress node-by-node as it happens.
+- **Run observability** — a dedicated run view with a Gantt-style execution
+  timeline, a node-by-node inspector (input/output/error/timing/retries),
+  per-run structured logs streamed live, and a workspace runs list with
+  filters, search, and cursor-based infinite scroll. See
+  [Run observability](#run-observability).
+- **Real-time collaboration** — open the same workflow in two places and see
+  each other live: presence avatars, smoothly-interpolated labeled cursors,
+  selection highlights, a non-blocking "X is editing" soft-lock, and graph edits
+  that appear in near-real-time. See [Real-time collaboration](#real-time-collaboration).
 - **Encrypted credential vault** — see below.
 - **Workspaces, auth & roles** — JWT auth, multi-user workspaces with
   owner/admin/member roles.
@@ -156,6 +188,92 @@ layer, selected via `LLM_PROVIDER` in `server/.env`:
 Each `ai.*` node can also override the model per-node; the env setting is just
 the default.
 
+## Workflow versioning
+
+Every workflow has a **draft** (what the editor edits) and, once published, a
+**published definition** (what active webhook/schedule triggers run). The two are
+deliberately separate:
+
+- **Editing is safe.** Saving only ever writes the draft, so in-progress edits
+  can't change what's running in production. A badge shows when the draft has
+  drifted from the live version.
+- **Publishing snapshots a version.** Each publish writes an immutable
+  `WorkflowVersion` (monotonic number, author, note, and the exact definition)
+  and promotes it to the published definition.
+- **History, preview & rollback.** The version drawer lists every published
+  version with a compact diff (nodes added/removed/changed, edges) against the
+  one before it. Any version can be previewed read-only on the canvas, or rolled
+  back — which simply republishes it as a new version (history is append-only).
+
+A queued run also snapshots the exact definition it will execute, so editing or
+rolling back never alters a run that's already in flight.
+
+## Run observability
+
+When a run misbehaves, the run view (`/runs/:id`) is what you reach for:
+
+- **Execution timeline** — a Gantt-style chart with one bar per node, placed by
+  start offset and sized by duration, colored by status. In-progress bars grow
+  live; bars show a retry count (`↻N`) when a node was re-attempted.
+- **Node inspector** — click any node to see its exact input, output, error,
+  timing, and attempt count.
+- **Structured logs** — every run emits ordered, level-tagged log lines keyed by
+  the run id (the correlation id, shown in the header). They stream in live as
+  the run executes and are retained for later inspection.
+- **Live streaming** — the view subscribes to the run's Socket.IO room; node
+  statuses, the timeline, and the log tail update as the worker executes,
+  without polling.
+
+The **runs list** (`/runs`) scales to large histories: filter by status,
+workflow, trigger type, and date range; free-text search by workflow name or run
+id; and cursor-based (keyset) infinite scroll. Each row offers quick actions —
+open the detail view, replay, and for a failed run, jump straight to the failing
+node.
+
+Logs are persisted to a `RunLog` table and served by `GET /runs/:id/logs`
+(supporting `?after=<seq>` for incremental fetches); the runs list is served by
+the paginated, filtered `GET /runs`. Payloads stay lean — the list omits
+per-node executions, and logs are fetched separately from the run record.
+
+## Real-time collaboration
+
+When more than one person opens the same workflow, the editor comes alive with
+multi-user awareness — the kind you'd expect from a collaborative design tool.
+
+- **Presence** — avatars of everyone else viewing the workflow appear in the top
+  bar, each in a stable per-user color. A person with several tabs shows once.
+- **Live cursors** — other people's cursors glide across the canvas, labeled with
+  their name. Cursors are broadcast in *flow-space* coordinates, so they stay
+  glued to canvas content even when collaborators have panned/zoomed differently,
+  and are smoothly interpolated by a `requestAnimationFrame` loop (snapped, not
+  animated, under `prefers-reduced-motion`).
+- **Selection awareness** — nodes another person has selected are outlined in
+  their color.
+- **Edit soft-lock** — when someone has a node's config open, a non-blocking
+  "X is editing" hint shows on the canvas and in the inspector, so two people
+  don't silently clobber each other.
+
+### How it works
+
+Presence is **ephemeral** — it lives entirely in Socket.IO room state and is
+never persisted. Each open editor tab is one socket that joins a workflow-scoped
+room (`wf:<id>`), authorized against the same workspace membership as the REST
+API. Cursors, selection, editing state, and applied graph edits are broadcast to
+the room and fanned out across API processes by the existing Redis adapter.
+Join/leave, reconnect (the client re-joins and replays its state on a fresh
+socket id), and stale-cursor cleanup are all handled.
+
+Graph edits (move/add/remove nodes and edges) are broadcast as small ops and
+merged **last-write-wins** — positions simply overwrite — which keeps the merge
+simple and robust for the common case of people working in different areas of
+the canvas.
+
+**Future work:** true conflict-free concurrent co-editing (e.g. a CRDT such as
+Yjs over the document) is a stretch goal. Today's last-write-wins merge can drop
+a change if two people edit the *same* node at the same instant; the soft-lock
+makes that visible but doesn't prevent it. A CRDT would make concurrent edits to
+the same node converge without loss.
+
 ## Credential encryption key management
 
 Workflow credentials (API keys, SMTP passwords, webhook URLs, DB connection
@@ -207,4 +325,42 @@ npm run test:web     # web
 
 GitHub Actions (`.github/workflows/ci.yml`) runs all of the above on every
 push and pull request, with real Postgres and Redis service containers — the
-same setup as local dev, not mocks.
+same setup as local dev, not mocks — and a production **web build** to catch
+bundling regressions the jsdom unit tests can't.
+
+## Deployment
+
+Fluxion deploys to [Railway](https://railway.app) as **five services** in one
+project — they map directly to the local topology:
+
+| Service | Source | Notes |
+| --- | --- | --- |
+| **Postgres** | Railway plugin | `DATABASE_URL` is injected into api + worker |
+| **Redis** | Railway plugin | `REDIS_URL` is injected into api + worker |
+| **api** | `Dockerfile.server` (default CMD) | Express + Socket.IO on `:4000` |
+| **worker** | `Dockerfile.server`, start command `node server/dist/worker.js` | shares the api image so they're always in sync |
+| **web** | `Dockerfile.web` | static SPA; `VITE_API_URL` is a **build arg** baked into the bundle |
+
+Key configuration:
+
+- Set the server env vars from [`server/.env.example`](server/.env.example) on
+  **api** and **worker** — most importantly a strong `JWT_SECRET`, a real
+  32-byte `CREDENTIALS_KEY` (never the dev fallback), and `CLIENT_URL` set to the
+  web service's URL (for CORS + the Socket.IO origin).
+- On **web**, set `VITE_API_URL` as a *Build Variable* (Vite inlines `VITE_*` at
+  build time) pointing at the api service's public URL.
+- Migrations: run `npx prisma migrate deploy --workspace=server` against the
+  production `DATABASE_URL` on each release (e.g. as a Railway release command).
+
+> [!IMPORTANT]
+> **Cost implications.** Five always-on services (two Node processes + Postgres +
+> Redis + a static server) exceed Railway's free trial credit. Postgres and Redis
+> are billed for uptime + storage, and the api/worker run continuously to keep the
+> queue and realtime layer live. Expect a small monthly bill on the Hobby plan;
+> scale the worker to zero (or merge api+worker) to reduce idle cost. Treat
+> `CREDENTIALS_KEY`/`JWT_SECRET` as production secrets via Railway's secret store.
+
+**Live URL:** _not yet wired — populate here and in the web service's
+`VITE_API_URL` once the project is deployed._ The app itself needs no source
+change: it reads `VITE_API_URL` (REST + Socket.IO base) with a `localhost:4000`
+fallback for local dev.
