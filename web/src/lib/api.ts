@@ -4,6 +4,7 @@ import type {
   AuthResponse,
   Credential,
   CredentialTypeSpec,
+  NodeTestResult,
   RunFilters,
   RunSummary,
   UpdateWorkflowResponse,
@@ -103,6 +104,19 @@ export const workflowApi = {
   },
   async remove(id: string): Promise<void> {
     await api.delete(`/workflows/${id}`);
+  },
+  /**
+   * Execute a single node in isolation, feeding it sample upstream data. `config`
+   * overrides the saved node config (so unsaved edits are testable); `trigger`
+   * and `sources` supply `{{ trigger.* }}` / `{{ nodeId.* }}` context.
+   */
+  async testNode(
+    workflowId: string,
+    nodeId: string,
+    body: { config?: Record<string, unknown>; trigger?: unknown; sources?: Record<string, unknown> },
+  ): Promise<NodeTestResult> {
+    const { data } = await api.post<NodeTestResult>(`/workflows/${workflowId}/nodes/${nodeId}/test`, body);
+    return data;
   },
 };
 

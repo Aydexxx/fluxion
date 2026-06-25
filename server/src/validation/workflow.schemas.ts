@@ -11,6 +11,9 @@ const workflowNodeSchema = z.object({
   type: z.string().min(1, "Node type is required"),
   position: nodePositionSchema,
   config: z.record(z.string(), z.unknown()).default({}),
+  // Pinned sample output, persisted as part of the definition. Optional and
+  // freeform — it's only ever read back as that node's stand-in output.
+  pinnedData: z.unknown().optional(),
 });
 
 const workflowEdgeSchema = z.object({
@@ -50,7 +53,21 @@ export const runWorkflowSchema = z.object({
   payload: z.unknown().optional(),
 });
 
+/**
+ * Body for testing a single node in isolation. All fields are optional:
+ *  - `config` overrides the saved node config (so unsaved editor edits are testable),
+ *  - `trigger` is the sample trigger payload referenced via `{{ trigger.* }}`,
+ *  - `sources` maps an upstream node id to the sample output to feed downstream.
+ * Pinned data saved on the definition takes precedence over `sources` per node.
+ */
+export const testNodeSchema = z.object({
+  config: z.record(z.string(), z.unknown()).optional(),
+  trigger: z.unknown().optional(),
+  sources: z.record(z.string(), z.unknown()).optional(),
+});
+
 export type RunWorkflowInput = z.infer<typeof runWorkflowSchema>;
+export type TestNodeInput = z.infer<typeof testNodeSchema>;
 export type WorkflowDefinitionInput = z.infer<typeof workflowDefinitionSchema>;
 export type CreateWorkflowInput = z.infer<typeof createWorkflowSchema>;
 export type UpdateWorkflowInput = z.infer<typeof updateWorkflowSchema>;

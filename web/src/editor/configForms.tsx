@@ -2,6 +2,7 @@ import type { ComponentType } from "react";
 import { FieldShell, Select, TextArea, TextInput } from "../components/Field";
 import { CopyIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { useEditor } from "./editorStore";
+import { ExpressionInput } from "./ExpressionInput";
 import { toast } from "../store/toasts";
 
 export interface ConfigFormProps {
@@ -116,7 +117,7 @@ function ScheduleForm({ config, onChange }: ConfigFormProps) {
 /* ── action.http ────────────────────────────────────────────────────────── */
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
-function HttpForm({ config, onChange }: ConfigFormProps) {
+function HttpForm({ nodeId, config, onChange }: ConfigFormProps) {
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   return (
     <div className="space-y-4">
@@ -131,27 +132,31 @@ function HttpForm({ config, onChange }: ConfigFormProps) {
           </Select>
         </FieldShell>
         <FieldShell label="URL">
-          <TextInput
+          <ExpressionInput
+            nodeId={nodeId}
+            singleLine
             placeholder="https://api.example.com/v1/resource"
             value={str(config.url)}
-            onChange={(e) => set({ url: e.target.value })}
+            onChange={(url) => set({ url })}
           />
         </FieldShell>
       </div>
       <FieldShell label="Headers" hint="One per line, as Key: Value.">
-        <TextArea
+        <ExpressionInput
+          nodeId={nodeId}
           rows={3}
           placeholder={"Authorization: Bearer …\nContent-Type: application/json"}
           value={str(config.headers)}
-          onChange={(e) => set({ headers: e.target.value })}
+          onChange={(headers) => set({ headers })}
         />
       </FieldShell>
       <FieldShell label="Body">
-        <TextArea
+        <ExpressionInput
+          nodeId={nodeId}
           rows={4}
           placeholder={'{\n  "key": "value"\n}'}
           value={str(config.body)}
-          onChange={(e) => set({ body: e.target.value })}
+          onChange={(body) => set({ body })}
         />
       </FieldShell>
     </div>
@@ -170,31 +175,37 @@ function readMappings(config: Record<string, unknown>): Mapping[] {
   return raw.map((m) => ({ key: str((m as Mapping)?.key), value: str((m as Mapping)?.value) }));
 }
 
-function TransformForm({ config, onChange }: ConfigFormProps) {
+function TransformForm({ nodeId, config, onChange }: ConfigFormProps) {
   const mappings = readMappings(config);
   const commit = (next: Mapping[]) => onChange({ ...config, mappings: next });
 
   return (
-    <FieldShell label="Field mappings" hint="Map output keys to source expressions.">
+    <FieldShell label="Field mappings" hint="Map output keys to source expressions. Use the ⚡ picker to insert references.">
       <div className="space-y-2">
         {mappings.map((m, i) => (
-          <div key={i} className="flex items-center gap-2">
-            <TextInput
-              placeholder="key"
-              value={m.key}
-              onChange={(e) => commit(mappings.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))}
-            />
-            <span className="text-faint">→</span>
-            <TextInput
-              placeholder="source.value"
-              value={m.value}
-              onChange={(e) => commit(mappings.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)))}
-            />
+          <div key={i} className="flex items-start gap-2">
+            <div className="w-[34%] shrink-0 pt-1.5">
+              <TextInput
+                placeholder="key"
+                value={m.key}
+                onChange={(e) => commit(mappings.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))}
+              />
+            </div>
+            <span className="pt-3 text-faint">→</span>
+            <div className="min-w-0 flex-1">
+              <ExpressionInput
+                nodeId={nodeId}
+                singleLine
+                placeholder="{{ input.value }}"
+                value={m.value}
+                onChange={(value) => commit(mappings.map((x, j) => (j === i ? { ...x, value } : x)))}
+              />
+            </div>
             <button
               type="button"
               aria-label="Remove mapping"
               onClick={() => commit(mappings.filter((_, j) => j !== i))}
-              className="shrink-0 rounded-md p-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink"
+              className="mt-1.5 shrink-0 rounded-md p-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink"
             >
               <TrashIcon />
             </button>
@@ -221,7 +232,7 @@ const AI_PROVIDERS = [
   { value: "openai", label: "OpenAI" },
 ];
 
-function AiForm({ config, onChange }: ConfigFormProps) {
+function AiForm({ nodeId, config, onChange }: ConfigFormProps) {
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   return (
     <div className="space-y-4">
@@ -244,11 +255,12 @@ function AiForm({ config, onChange }: ConfigFormProps) {
         </FieldShell>
       </div>
       <FieldShell label="Prompt" hint="Reference upstream output with {{ }} placeholders, e.g. {{ input.text }}.">
-        <TextArea
+        <ExpressionInput
+          nodeId={nodeId}
           rows={6}
           placeholder={"Summarize the following in three bullets:\n\n{{ input.text }}"}
           value={str(config.prompt)}
-          onChange={(e) => set({ prompt: e.target.value })}
+          onChange={(prompt) => set({ prompt })}
         />
       </FieldShell>
     </div>
@@ -289,32 +301,32 @@ function CredentialPicker({ credType, value, onChange }: { credType: string; val
 }
 
 /* ── action.email ───────────────────────────────────────────────────────── */
-function EmailForm({ config, onChange }: ConfigFormProps) {
+function EmailForm({ nodeId, config, onChange }: ConfigFormProps) {
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   return (
     <div className="space-y-4">
       <CredentialPicker credType="smtp" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
       <FieldShell label="To">
-        <TextInput placeholder="someone@example.com" value={str(config.to)} onChange={(e) => set({ to: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} singleLine placeholder="someone@example.com" value={str(config.to)} onChange={(to) => set({ to })} />
       </FieldShell>
       <FieldShell label="Subject">
-        <TextInput placeholder="Subject line" value={str(config.subject)} onChange={(e) => set({ subject: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} singleLine placeholder="Subject line" value={str(config.subject)} onChange={(subject) => set({ subject })} />
       </FieldShell>
       <FieldShell label="Body" hint="Plain text. Reference upstream output with {{ }} placeholders.">
-        <TextArea rows={5} placeholder={"Hello {{ input.name }},"} value={str(config.text)} onChange={(e) => set({ text: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} rows={5} placeholder={"Hello {{ input.name }},"} value={str(config.text)} onChange={(text) => set({ text })} />
       </FieldShell>
     </div>
   );
 }
 
 /* ── action.slack ───────────────────────────────────────────────────────── */
-function SlackForm({ config, onChange }: ConfigFormProps) {
+function SlackForm({ nodeId, config, onChange }: ConfigFormProps) {
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   return (
     <div className="space-y-4">
       <CredentialPicker credType="slack_webhook" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
       <FieldShell label="Message" hint="Posted to the Slack/Discord incoming webhook.">
-        <TextArea rows={5} placeholder={"Deploy finished for {{ input.repo }} ✅"} value={str(config.text)} onChange={(e) => set({ text: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} rows={5} placeholder={"Deploy finished for {{ input.repo }} ✅"} value={str(config.text)} onChange={(text) => set({ text })} />
       </FieldShell>
     </div>
   );
@@ -325,21 +337,22 @@ function readLines(value: unknown): string {
   return Array.isArray(value) ? value.map(String).join("\n") : str(value);
 }
 
-function DatabaseForm({ config, onChange }: ConfigFormProps) {
+function DatabaseForm({ nodeId, config, onChange }: ConfigFormProps) {
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   const readOnly = config.readOnly !== false;
   return (
     <div className="space-y-4">
       <CredentialPicker credType="database" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
       <FieldShell label="Query" hint="Use $1, $2… placeholders; values are bound, never concatenated.">
-        <TextArea rows={4} placeholder={"SELECT * FROM users WHERE id = $1"} value={str(config.query)} onChange={(e) => set({ query: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} rows={4} placeholder={"SELECT * FROM users WHERE id = $1"} value={str(config.query)} onChange={(query) => set({ query })} />
       </FieldShell>
       <FieldShell label="Parameters" hint="One per line, in order ($1, $2…). Supports {{ }} placeholders.">
-        <TextArea
+        <ExpressionInput
+          nodeId={nodeId}
           rows={2}
           placeholder={"{{ input.userId }}"}
           value={readLines(config.params)}
-          onChange={(e) => set({ params: e.target.value.split("\n").map((s) => s.trim()).filter((s) => s !== "") })}
+          onChange={(v) => set({ params: v.split("\n").map((s) => s.trim()).filter((s) => s !== "") })}
         />
       </FieldShell>
       <FieldShell label="Access">
@@ -364,7 +377,7 @@ function readFieldRows(config: Record<string, unknown>): FieldRow[] {
   return raw.map((f) => ({ as: str((f as FieldRow)?.as), path: str((f as FieldRow)?.path) }));
 }
 
-function LoopForm({ config, onChange }: ConfigFormProps) {
+function LoopForm({ nodeId, config, onChange }: ConfigFormProps) {
   const rows = readFieldRows(config);
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   const commit = (next: FieldRow[]) => set({ fields: next });
@@ -372,7 +385,7 @@ function LoopForm({ config, onChange }: ConfigFormProps) {
   return (
     <div className="space-y-4">
       <FieldShell label="Items" hint="An array to iterate, e.g. {{ input.users }}. Empty uses the single upstream array.">
-        <TextInput placeholder="{{ input.users }}" value={str(config.items)} onChange={(e) => set({ items: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} singleLine placeholder="{{ input.users }}" value={str(config.items)} onChange={(items) => set({ items })} />
       </FieldShell>
       <FieldShell label="Project each item" hint="Optional. Map output keys to dotted paths within each item. Leave empty to pass items through.">
         <div className="space-y-2">
@@ -420,13 +433,13 @@ const FILTER_OPERATORS = [
 
 const NO_VALUE_OPS = new Set(["truthy", "falsy"]);
 
-function FilterForm({ config, onChange }: ConfigFormProps) {
+function FilterForm({ nodeId, config, onChange }: ConfigFormProps) {
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   const operator = str(config.operator, "truthy");
   return (
     <div className="space-y-4">
       <FieldShell label="Items" hint="The array to filter, e.g. {{ input.users }}. Empty uses the single upstream array.">
-        <TextInput placeholder="{{ input.users }}" value={str(config.items)} onChange={(e) => set({ items: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} singleLine placeholder="{{ input.users }}" value={str(config.items)} onChange={(items) => set({ items })} />
       </FieldShell>
       <FieldShell label="Field" hint="Dotted path read from each item. Leave empty to test the item itself.">
         <TextInput placeholder="status" value={str(config.field)} onChange={(e) => set({ field: e.target.value })} />
@@ -460,7 +473,7 @@ const AGENT_TOOLS = [
   { value: "http_get", label: "HTTP GET (read-only)" },
 ];
 
-function AgentForm({ config, onChange }: ConfigFormProps) {
+function AgentForm({ nodeId, config, onChange }: ConfigFormProps) {
   const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
   const tools = Array.isArray(config.tools) ? (config.tools as string[]) : ["rag_search"];
   const knowledge = Array.isArray(config.knowledge) ? (config.knowledge as unknown[]).map(String) : [];
@@ -485,7 +498,7 @@ function AgentForm({ config, onChange }: ConfigFormProps) {
         </FieldShell>
       </div>
       <FieldShell label="Goal" hint="What the agent should accomplish. Supports {{ }} placeholders.">
-        <TextArea rows={4} placeholder={"Answer the customer question: {{ input.question }}"} value={str(config.goal)} onChange={(e) => set({ goal: e.target.value })} />
+        <ExpressionInput nodeId={nodeId} rows={4} placeholder={"Answer the customer question: {{ input.question }}"} value={str(config.goal)} onChange={(goal) => set({ goal })} />
       </FieldShell>
       <FieldShell label="Tools">
         <div className="space-y-1.5">
@@ -524,28 +537,30 @@ function AgentForm({ config, onChange }: ConfigFormProps) {
 }
 
 /* ── logic.condition ────────────────────────────────────────────────────── */
-function ConditionForm({ config, onChange }: ConfigFormProps) {
+function ConditionForm({ nodeId, config, onChange }: ConfigFormProps) {
   return (
     <FieldShell label="Expression" hint="Compare with == != > < >= <=. True routes the true branch, false the false branch.">
-      <TextArea
+      <ExpressionInput
+        nodeId={nodeId}
         rows={3}
         placeholder="{{ input.status }} == 200"
         value={str(config.expression)}
-        onChange={(e) => onChange({ ...config, expression: e.target.value })}
+        onChange={(expression) => onChange({ ...config, expression })}
       />
     </FieldShell>
   );
 }
 
 /* ── output.response ────────────────────────────────────────────────────── */
-function ResponseForm({ config, onChange }: ConfigFormProps) {
+function ResponseForm({ nodeId, config, onChange }: ConfigFormProps) {
   return (
     <FieldShell label="Response body" hint="What the workflow returns to its caller.">
-      <TextArea
+      <ExpressionInput
+        nodeId={nodeId}
         rows={6}
         placeholder={'{\n  "ok": true,\n  "result": "{{ input }}"\n}'}
         value={str(config.body)}
-        onChange={(e) => onChange({ ...config, body: e.target.value })}
+        onChange={(body) => onChange({ ...config, body })}
       />
     </FieldShell>
   );

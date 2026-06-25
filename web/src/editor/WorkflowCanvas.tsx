@@ -2,18 +2,19 @@ import { useCallback, useEffect, useRef } from "react";
 import {
   Background,
   BackgroundVariant,
-  Controls,
   MiniMap,
   ReactFlow,
   useReactFlow,
-  type NodeMouseHandler,
 } from "@xyflow/react";
 import { useReducedMotion } from "framer-motion";
 import { useEditor } from "./editorStore";
 import { WorkflowNode } from "./WorkflowNode";
+import { CanvasControls } from "./CanvasControls";
 import { categoryAccent } from "./nodeCatalog";
 import type { FluxNode } from "./graph";
 import { DRAG_MIME } from "./dragMime";
+
+const SNAP_GRID: [number, number] = [24, 24];
 
 const nodeTypes = { flux: WorkflowNode };
 
@@ -31,11 +32,13 @@ export function WorkflowCanvas() {
   const edges = useEditor((s) => s.edges);
   const status = useEditor((s) => s.status);
   const workflowId = useEditor((s) => s.id);
+  const snapToGrid = useEditor((s) => s.snapToGrid);
   const onNodesChange = useEditor((s) => s.onNodesChange);
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
   const onConnect = useEditor((s) => s.onConnect);
   const addNodeAt = useEditor((s) => s.addNodeAt);
   const selectNode = useEditor((s) => s.selectNode);
+  const beginInteraction = useEditor((s) => s.beginInteraction);
 
   // Fit the view once a workflow's graph has loaded.
   useEffect(() => {
@@ -63,8 +66,10 @@ export function WorkflowCanvas() {
     [reactFlow, addNodeAt],
   );
 
-  const onNodeClick = useCallback<NodeMouseHandler<FluxNode>>((_, node) => selectNode(node.id), [selectNode]);
   const onPaneClick = useCallback(() => selectNode(null), [selectNode]);
+  // Snapshot the graph once when a drag (single node or selection) begins, so a
+  // whole move collapses to a single undo step.
+  const onDragStart = useCallback(() => beginInteraction(), [beginInteraction]);
 
   return (
     <div ref={wrapperRef} className="relative h-full w-full" onDrop={onDrop} onDragOver={onDragOver}>
@@ -84,9 +89,16 @@ export function WorkflowCanvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onNodeClick={onNodeClick}
         onPaneClick={onPaneClick}
-        deleteKeyCode={["Backspace", "Delete"]}
+        onNodeDragStart={onDragStart}
+        onSelectionDragStart={onDragStart}
+        // Deletion is owned by the editor shortcut layer for clean, grouped undo history.
+        deleteKeyCode={null}
+        // Shift-click adds to the selection; Shift-drag on the pane draws a marquee.
+        multiSelectionKeyCode="Shift"
+        selectionKeyCode="Shift"
+        snapToGrid={snapToGrid}
+        snapGrid={SNAP_GRID}
         proOptions={{ hideAttribution: false }}
         minZoom={0.3}
         maxZoom={1.75}
@@ -100,11 +112,7 @@ export function WorkflowCanvas() {
           size={1}
           color="color-mix(in oklab, white 9%, transparent)"
         />
-        <Controls
-          showInteractive={false}
-          position="bottom-right"
-          className="!shadow-none"
-        />
+        <CanvasControls />
         <MiniMap
           pannable
           zoomable

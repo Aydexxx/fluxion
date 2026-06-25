@@ -8,6 +8,9 @@ import { WorkflowCanvas } from "../editor/WorkflowCanvas";
 import { ConfigPanel } from "../editor/ConfigPanel";
 import { RunResultsBar } from "../editor/RunResultsBar";
 import { RunHistoryDrawer } from "../editor/RunHistoryDrawer";
+import { CommandPalette } from "../editor/CommandPalette";
+import { ShortcutsHelp } from "../editor/ShortcutsHelp";
+import { useEditorShortcuts } from "../editor/useEditorShortcuts";
 import { CredentialsManager } from "../components/CredentialsManager";
 import { navigate } from "../lib/router";
 import { Logo, SpinnerIcon } from "../components/icons";
@@ -29,6 +32,7 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
 
   return (
     <ReactFlowProvider>
+      <EditorKeyboardLayer />
       <div className="flex h-screen flex-col bg-base">
         <EditorTopBar />
         <div className="relative flex min-h-0 flex-1">
@@ -43,6 +47,8 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
           </main>
         </div>
       </div>
+      <CommandPalette />
+      <ShortcutsHelp />
       <CredentialsManager
         open={credentialsManagerOpen}
         workspaceId={workspaceId}
@@ -53,6 +59,12 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
       />
     </ReactFlowProvider>
   );
+}
+
+/** Registers the global editor keyboard layer; must live inside the ReactFlow provider. */
+function EditorKeyboardLayer() {
+  useEditorShortcuts();
+  return null;
 }
 
 function LoadingVeil() {

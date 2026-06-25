@@ -25,6 +25,8 @@ export interface FlowNodeDef {
   type: string;
   position: { x: number; y: number };
   config: Record<string, unknown>;
+  /** Optional pinned sample output, persisted with the definition. */
+  pinnedData?: unknown;
 }
 
 export interface FlowEdgeDef {
@@ -137,6 +139,19 @@ export interface RunSummary {
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
+}
+
+/** Result of testing a single node in isolation (POST /workflows/:id/nodes/:nodeId/test). */
+export interface NodeTestResult {
+  nodeId: string;
+  status: "success" | "failed";
+  /** The exact `{ trigger, sources }` fed to the executor. */
+  input: { trigger: unknown; sources: Record<string, unknown> };
+  output: unknown;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string;
+  durationMs: number;
 }
 
 /** Run summary enriched with workflow name + replay lineage, from GET /runs. */

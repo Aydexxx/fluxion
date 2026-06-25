@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createNode, definitionToFlow, flowToDefinition, newEdgeId } from "../graph";
+import { cloneSubgraph, createNode, definitionToFlow, flowToDefinition, newEdgeId } from "../graph";
+import type { FluxEdge, FluxNode } from "../graph";
 import type { WorkflowDefinition } from "../../lib/types";
 
 describe("createNode", () => {
@@ -31,6 +32,43 @@ describe("newEdgeId", () => {
     const b = newEdgeId();
     expect(a).toMatch(/^edge_/);
     expect(a).not.toBe(b);
+  });
+});
+
+describe("cloneSubgraph", () => {
+  const a = createNode("trigger.manual", { x: 0, y: 0 });
+  const b = createNode("output.response", { x: 100, y: 40 });
+  const outsider = createNode("action.http", { x: 300, y: 0 });
+  const internalEdge: FluxEdge = { id: "e1", source: a.id, target: b.id };
+  const danglingEdge: FluxEdge = { id: "e2", source: b.id, target: outsider.id };
+
+  it("assigns fresh node and edge ids, remapping internal edges", () => {
+    const { nodes, edges } = cloneSubgraph([a, b], [internalEdge]);
+    expect(nodes.map((n) => n.id)).not.toEqual([a.id, b.id]);
+    nodes.forEach((n) => expect(n.id).toMatch(/^node_/));
+    // The edge is rewired to the *cloned* endpoints, with a new id.
+    expect(edges).toHaveLength(1);
+    expect(edges[0].id).not.toBe("e1");
+    expect(edges[0].source).toBe(nodes[0].id);
+    expect(edges[0].target).toBe(nodes[1].id);
+  });
+
+  it("drops edges that touch a node outside the cloned set", () => {
+    const { edges } = cloneSubgraph([a, b], [internalEdge, danglingEdge]);
+    expect(edges).toHaveLength(1);
+  });
+
+  it("offsets positions and pre-selects the clones", () => {
+    const { nodes } = cloneSubgraph([a], [], { x: 24, y: 24 });
+    expect(nodes[0].position).toEqual({ x: 24, y: 24 });
+    expect(nodes[0].selected).toBe(true);
+  });
+
+  it("deep-clones config so the copy edits independently", () => {
+    const node: FluxNode = { ...a, data: { ...a.data, config: { url: "https://x" } } };
+    const { nodes } = cloneSubgraph([node], []);
+    (nodes[0].data.config as Record<string, unknown>).url = "https://changed";
+    expect(node.data.config.url).toBe("https://x");
   });
 });
 

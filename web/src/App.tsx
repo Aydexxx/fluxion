@@ -7,7 +7,8 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { EditorPage } from "./pages/EditorPage";
 import { RunsPage } from "./pages/RunsPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
-import { Toasts } from "./components/Toasts";
+import { ToastProvider } from "./components/ui/toast";
+import { ConfirmHost } from "./components/ui/confirm";
 import { Logo, SpinnerIcon } from "./components/icons";
 
 const PUBLIC_ROUTES = new Set(["login", "register"]);
@@ -32,13 +33,19 @@ export default function App() {
     if (route.name === "notfound") navigate(status === "authed" ? "/" : "/login", { replace: true });
   }, [status, route]);
 
-  if (status === "loading") return <Splash />;
-
   return (
-    <>
-      <Routed routeName={route.name} workflowId={route.name === "editor" ? route.workflowId : null} authed={status === "authed"} />
-      <Toasts />
-    </>
+    <ToastProvider>
+      {status === "loading" ? (
+        <Splash />
+      ) : (
+        <Routed
+          routeName={route.name}
+          workflowId={route.name === "editor" ? route.workflowId : null}
+          authed={status === "authed"}
+        />
+      )}
+      <ConfirmHost />
+    </ToastProvider>
   );
 }
 

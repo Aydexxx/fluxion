@@ -335,3 +335,81 @@ describe("DELETE /workflows/:id (RBAC enforcement)", () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe("POST /workflows/:id/nodes/:nodeId/test", () => {
+  // trigger → transform(pinned) → response. The response node references the
+  // transform's output by id, so we can prove pinned-data precedence end to end.
+  const pinnedDefinition = {
+    nodes: [
+      { id: "n1", type: "trigger.manual", position: { x: 0, y: 0 }, config: {} },
+      { id: "n2", type: "action.transform", position: { x: 100, y: 0 }, config: {}, pinnedData: { v: "PINNED" } },
+      { id: "n3", type: "output.response", position: { x: 200, y: 0 }, config: { body: "{{ n2.v }}" } },
+    ],
+    edges: [
+      { id: "e1", source: "n1", target: "n2" },
+      { id: "e2", source: "n2", target: "n3" },
+    ],
+  };
+
+  async function saveDefinition(token: string, workflowId: string, definition: unknown) {
+    return request(app).put(`/workflows/${workflowId}`).set(...authHeader(token)).send({ definition });
+  }
+
+  it("executes just the requested node using supplied source data", async () => {
+    const owner = await registerUser("Ada Lovelace", "ada20@example.com");
+    const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
+    await saveDefinition(owner.token, created.body.id, pinnedDefinition);
+
+    const res = await request(app)
+      .post(`/workflows/${created.body.id}/nodes/n3/test`)
+      .set(...authHeader(owner.token))
+      .send({ sources: { n2: { v: "LIVE" } } });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("success");
+    // Pinned data on n2 wins over the supplied source.
+    expect(res.body.output).toEqual({ body: "PINNED" });
+    expect(res.body.input.sources).toEqual({ n2: { v: "PINNED" } });
+  });
+
+  it("honours a config override so unsaved editor edits can be tested", async () => {
+    const owner = await registerUser("Ada Lovelace", "ada21@example.com");
+    const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
+    await saveDefinition(owner.token, created.body.id, pinnedDefinition);
+
+    const res = await request(app)
+      .post(`/workflows/${created.body.id}/nodes/n3/test`)
+      .set(...authHeader(owner.token))
+      .send({ config: { body: "override={{ n2.v }}" } });
+
+    expect(res.status).toBe(200);
+    expect(res.body.output).toEqual({ body: "override=PINNED" });
+  });
+
+  it("returns 404 for a node id not in the definition", async () => {
+    const owner = await registerUser("Ada Lovelace", "ada22@example.com");
+    const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
+    await saveDefinition(owner.token, created.body.id, pinnedDefinition);
+
+    const res = await request(app)
+      .post(`/workflows/${created.body.id}/nodes/ghost/test`)
+      .set(...authHeader(owner.token))
+      .send({});
+
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a user who is not a member of the owning workspace", async () => {
+    const owner = await registerUser("Ada Lovelace", "ada23@example.com");
+    const outsider = await registerUser("Eve", "eve23@example.com");
+    const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
+    await saveDefinition(owner.token, created.body.id, pinnedDefinition);
+
+    const res = await request(app)
+      .post(`/workflows/${created.body.id}/nodes/n3/test`)
+      .set(...authHeader(outsider.token))
+      .send({});
+
+    expect(res.status).toBe(403);
+  });
+});

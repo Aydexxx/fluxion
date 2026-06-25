@@ -1,12 +1,12 @@
-import { useEffect } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useEditor } from "./editorStore";
 import { navigate } from "../lib/router";
-import { toast } from "../store/toasts";
-import { ChevronRightIcon, HistoryIcon, Logo, PlayIcon, SaveIcon, SpinnerIcon } from "../components/icons";
+import { useToast } from "../components/ui/toast";
+import { ChevronRightIcon, HistoryIcon, Logo, PlayIcon, SaveIcon, SearchIcon, SpinnerIcon } from "../components/icons";
 
 export function EditorTopBar() {
   const reduce = useReducedMotion();
+  const toast = useToast();
   const name = useEditor((s) => s.name);
   const isActive = useEditor((s) => s.isActive);
   const dirty = useEditor((s) => s.dirty);
@@ -17,16 +17,18 @@ export function EditorTopBar() {
   const save = useEditor((s) => s.save);
   const run = useEditor((s) => s.run);
   const setHistoryOpen = useEditor((s) => s.setHistoryOpen);
+  const setCommandPaletteOpen = useEditor((s) => s.setCommandPaletteOpen);
 
   const handleRun = async () => {
+    const id = toast.loading("Starting run…");
     const res = await run();
     if (!res.ok) {
-      toast.error(res.message ?? "Could not run workflow");
+      toast.update(id, { kind: "error", message: res.message ?? "Could not run workflow" });
       return;
     }
     // The run is now queued; the worker executes it and live events drive the
     // canvas + a completion toast (see editorStore.applyLiveEvent).
-    toast.info("Run queued");
+    toast.update(id, { kind: "info", message: "Run queued" });
   };
 
   const handleSave = async () => {
@@ -40,18 +42,7 @@ export function EditorTopBar() {
     for (const w of warnings.slice(0, 2)) toast.info(w);
   };
 
-  // Cmd/Ctrl+S to save.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
-        e.preventDefault();
-        void handleSave();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Save / undo / redo / palette shortcuts are owned by useEditorShortcuts.
 
   return (
     <header className="relative z-30 flex h-14 shrink-0 items-center gap-3 border-b border-white/8 bg-surface/60 px-3 backdrop-blur-xl">
@@ -77,6 +68,17 @@ export function EditorTopBar() {
       </div>
 
       <ActiveToggle active={isActive} onToggle={() => setActive(!isActive)} reduce={!!reduce} />
+
+      <button
+        type="button"
+        onClick={() => setCommandPaletteOpen(true)}
+        aria-label="Open command palette"
+        title="Command palette"
+        className="flex items-center gap-2 rounded-lg border border-white/8 py-1.5 pl-2.5 pr-2 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink"
+      >
+        <SearchIcon className="text-[14px]" />
+        <kbd className="rounded border border-white/10 px-1.5 py-0.5 font-mono text-[10px] text-faint">⌘K</kbd>
+      </button>
 
       <button
         type="button"

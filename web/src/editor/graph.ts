@@ -10,6 +10,8 @@ export interface FluxNodeData extends Record<string, unknown> {
   nodeType: string;
   title: string;
   config: Record<string, unknown>;
+  /** Mock/sample output pinned to this node, used for design-time data previews and single-node tests. */
+  pinned?: unknown;
 }
 
 export type FluxNode = Node<FluxNodeData, "flux">;
@@ -47,6 +49,7 @@ export function definitionToFlow(def: WorkflowDefinition | undefined): { nodes: 
         nodeType: n.type,
         title: typeof title === "string" ? title : spec.defaultTitle,
         config,
+        ...(n.pinnedData !== undefined ? { pinned: n.pinnedData } : {}),
       },
     };
   });
@@ -70,6 +73,7 @@ export function flowToDefinition(nodes: FluxNode[], edges: FluxEdge[]): Workflow
       type: n.data.nodeType,
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
       config: { ...n.data.config, [TITLE_KEY]: n.data.title },
+      ...(n.data.pinned !== undefined ? { pinnedData: n.data.pinned } : {}),
     })),
     edges: edges.map((e): FlowEdgeDef => {
       const edge: FlowEdgeDef = { id: e.id, source: e.source, target: e.target };
@@ -82,4 +86,78 @@ export function flowToDefinition(nodes: FluxNode[], edges: FluxEdge[]): Workflow
 
 export function newEdgeId(): string {
   return uid("edge");
+}
+
+/** Immediate upstream (parent) node ids of `target`, de-duplicated. */
+export function parentIds(target: string, edges: FluxEdge[]): string[] {
+  const seen = new Set<string>();
+  for (const e of edges) if (e.target === target) seen.add(e.source);
+  return [...seen];
+}
+
+/**
+ * Transitive upstream node ids of `target` — every node that can reach it along
+ * edges — returned nearest-first (direct parents before their parents). Drives
+ * the data picker's "available data" tree.
+ */
+export function ancestorIds(target: string, edges: FluxEdge[]): string[] {
+  const parentsOf = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!parentsOf.has(e.target)) parentsOf.set(e.target, []);
+    parentsOf.get(e.target)!.push(e.source);
+  }
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  let frontier = parentsOf.get(target) ?? [];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ordered.push(id);
+      next.push(...(parentsOf.get(id) ?? []));
+    }
+    frontier = next;
+  }
+  return ordered;
+}
+
+/**
+ * Clone a set of nodes (and the edges *between* them) with fresh ids, offset in
+ * flow space. Edges that touch a node outside the set are dropped. The clones are
+ * returned pre-selected so a paste/duplicate lands as the new active selection.
+ *
+ * Pure and id-stable per call — used by copy/paste and duplicate.
+ */
+export function cloneSubgraph(
+  nodes: FluxNode[],
+  edges: FluxEdge[],
+  offset: { x: number; y: number } = { x: 24, y: 24 },
+): { nodes: FluxNode[]; edges: FluxEdge[] } {
+  const idMap = new Map<string, string>();
+
+  const clonedNodes: FluxNode[] = nodes.map((n) => {
+    const newId = uid("node");
+    idMap.set(n.id, newId);
+    return {
+      ...n,
+      id: newId,
+      position: { x: n.position.x + offset.x, y: n.position.y + offset.y },
+      selected: true,
+      // Deep-clone config so the copy edits independently of the original.
+      data: { ...n.data, config: structuredClone(n.data.config) },
+    };
+  });
+
+  const clonedEdges: FluxEdge[] = edges
+    .filter((e) => idMap.has(e.source) && idMap.has(e.target))
+    .map((e) => ({
+      ...e,
+      id: newEdgeId(),
+      source: idMap.get(e.source) as string,
+      target: idMap.get(e.target) as string,
+      selected: false,
+    }));
+
+  return { nodes: clonedNodes, edges: clonedEdges };
 }

@@ -11,6 +11,7 @@ import { formatDuration, timeAgo } from "../lib/format";
 import { navigate } from "../lib/router";
 import { toast } from "../store/toasts";
 import { EASE } from "../lib/motion";
+import { useFocusTrap } from "../lib/useFocusTrap";
 
 const STATUSES: (ExecutionStatus | "all")[] = ["all", "queued", "running", "success", "failed"];
 const RANGES = [
@@ -222,6 +223,7 @@ function ReplayButton({ runId, onReplayed, compact }: { runId: string; onReplaye
 
 function RunDetailDrawer({ runId, onClose, onReplayed }: { runId: string | null; onClose: () => void; onReplayed: () => void }) {
   const reduce = useReducedMotion();
+  const trapRef = useFocusTrap<HTMLElement>(runId !== null, onClose);
   const [run, setRun] = useState<WorkflowRun | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -251,11 +253,16 @@ function RunDetailDrawer({ runId, onClose, onReplayed }: { runId: string | null;
         <div className="fixed inset-0 z-[70]">
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} className="absolute inset-0 bg-void/60 backdrop-blur-sm" />
           <motion.aside
+            ref={trapRef}
+            tabIndex={-1}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Run detail"
             initial={reduce ? { opacity: 0 } : { x: 40, opacity: 0 }}
             animate={reduce ? { opacity: 1 } : { x: 0, opacity: 1 }}
             exit={reduce ? { opacity: 0 } : { x: 40, opacity: 0 }}
             transition={{ duration: 0.3, ease: EASE }}
-            className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col overflow-hidden border-l border-white/8 bg-base"
+            className="absolute right-0 top-0 flex h-full w-full max-w-[480px] flex-col overflow-hidden border-l border-white/8 bg-base outline-none"
           >
             <header className="flex items-center justify-between border-b border-white/8 p-4">
               <div>

@@ -4,11 +4,14 @@ import * as workflowService from "../services/workflows";
 import type { SafeWorkflow, SafeWorkflowSummary } from "../services/workflows";
 import { listRuns, runWorkflowById } from "../services/runs";
 import type { RunSummaryRecord } from "../services/runs";
+import { testWorkflowNode } from "../services/nodeTest";
 import type { RunRecord } from "../engine/persistence";
+import type { SingleNodeResult } from "../engine/runSingleNode";
 import type {
   CreateWorkflowInput,
   ListWorkflowsQuery,
   RunWorkflowInput,
+  TestNodeInput,
   UpdateWorkflowInput,
 } from "../validation/workflow.schemas";
 
@@ -61,4 +64,12 @@ export async function listWorkflowRuns(
 ): Promise<void> {
   const runs = await listRuns(req.params.id, currentUserId(req));
   res.json(runs);
+}
+
+export async function testWorkflowNodeController(
+  req: Request<{ id: string; nodeId: string }, unknown, TestNodeInput>,
+  res: Response<SingleNodeResult>,
+): Promise<void> {
+  const result = await testWorkflowNode(req.params.id, req.params.nodeId, currentUserId(req), req.body);
+  res.json(result);
 }

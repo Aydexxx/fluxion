@@ -40,6 +40,76 @@ export function BoltIcon(props: IconProps) {
   );
 }
 
+export function UndoIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9 7 4 12l5 5" />
+      <path d="M4 12h11a5 5 0 0 1 0 10h-2" />
+    </Svg>
+  );
+}
+
+export function RedoIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="m15 7 5 5-5 5" />
+      <path d="M20 12H9a5 5 0 0 0 0 10h2" />
+    </Svg>
+  );
+}
+
+export function MinusIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M5 12h14" />
+    </Svg>
+  );
+}
+
+export function FrameIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3" />
+    </Svg>
+  );
+}
+
+export function CommandIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9 6a3 3 0 1 0-3 3h12a3 3 0 1 0-3-3v12a3 3 0 1 0 3-3H6a3 3 0 1 0 3 3V6Z" />
+    </Svg>
+  );
+}
+
+export function KeyboardIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="2.5" y="6" width="19" height="12" rx="2" />
+      <path d="M7 10h.01M11 10h.01M15 10h.01M17 10h.01M7 13.5h10" />
+    </Svg>
+  );
+}
+
+export function MagnetIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6 4v7a6 6 0 0 0 12 0V4" />
+      <path d="M4 4h4v3H4zM16 4h4v3h-4z" />
+    </Svg>
+  );
+}
+
+export function InfoIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <circle cx="12" cy="7.8" r="0.6" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
 export function WebhookIcon(props: IconProps) {
   return (
     <Svg {...props}>

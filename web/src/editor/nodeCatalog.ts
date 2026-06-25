@@ -230,3 +230,15 @@ export function getNodeSpec(type: string): NodeSpec {
 export function categoryAccent(type: string): string {
   return CATEGORIES[getNodeSpec(type).category].accent;
 }
+
+/**
+ * Case-insensitive match of a node spec against a free-text query, across its
+ * label, blurb, type and category label. An empty query matches everything.
+ * Shared by the node palette filter and the command palette.
+ */
+export function matchesSpec(spec: NodeSpec, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === "") return true;
+  const haystack = `${spec.label} ${spec.blurb} ${spec.type} ${CATEGORIES[spec.category].label}`.toLowerCase();
+  return q.split(/\s+/).every((term) => haystack.includes(term));
+}

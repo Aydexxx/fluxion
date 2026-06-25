@@ -1,6 +1,6 @@
 import type { WorkflowDefinition, WorkflowEdge, WorkflowNode } from "../dag/types";
 import { CycleError, topologicalSort } from "../dag/topologicalSort";
-import { resolveTemplates, type TemplateScope } from "./template";
+import { buildNodeScope, resolveNodeConfig } from "./nodeScope";
 import type { NodeExecutorRegistry } from "./registry";
 import type { RunRecord, RunRecorder } from "./persistence";
 import { noopEventSink, type RunEventSink } from "./events";
@@ -118,7 +118,7 @@ export async function runWorkflow(params: RunWorkflowParams): Promise<RunRecord>
       break;
     }
 
-    const resolvedNode = resolveNodeConfig(node, scopeFrom(trigger.payload, outputs, sources));
+    const resolvedNode = resolveNodeConfig(node, buildNodeScope(trigger.payload, Object.fromEntries(outputs), sources));
 
     try {
       const output = await executor.execute(resolvedNode, input, context);
@@ -176,21 +176,4 @@ function collectSources(incoming: WorkflowEdge[], outputs: Map<string, unknown>)
     if (outputs.has(edge.source)) sources[edge.source] = outputs.get(edge.source);
   }
   return sources;
-}
-
-/**
- * Builds the template scope a node's config resolves against: the trigger
- * payload, every upstream output keyed by node id, and an `input` convenience
- * alias — the sole upstream output when there's exactly one source, otherwise
- * the full `{ nodeId: output }` map. So `{{ input.text }}` works for the common
- * single-parent case without the author needing to know the upstream node id.
- */
-function scopeFrom(payload: unknown, outputs: Map<string, unknown>, sources: Record<string, unknown>): TemplateScope {
-  const sourceKeys = Object.keys(sources);
-  const input = sourceKeys.length === 1 ? sources[sourceKeys[0]] : sources;
-  return { trigger: payload, input, ...Object.fromEntries(outputs) };
-}
-
-function resolveNodeConfig(node: WorkflowNode, scope: TemplateScope): WorkflowNode {
-  return { ...node, config: resolveTemplates(node.config, scope) };
 }

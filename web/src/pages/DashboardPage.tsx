@@ -4,9 +4,9 @@ import { useAuth } from "../store/auth";
 import { workflowApi, errorMessage } from "../lib/api";
 import type { WorkflowSummary } from "../lib/types";
 import { navigate } from "../lib/router";
-import { toast } from "../store/toasts";
+import { useToast } from "../components/ui/toast";
+import { confirm } from "../components/ui/confirm";
 import { timeAgo } from "../lib/format";
-import { ConfirmDialog } from "../components/ConfirmDialog";
 import { TopNav } from "../components/TopNav";
 import { GridIcon, Logo, PlusIcon, SpinnerIcon, TrashIcon } from "../components/icons";
 import { categoryAccent } from "../editor/nodeCatalog";
@@ -14,12 +14,11 @@ import { riseIn, stagger, still } from "../lib/motion";
 
 export function DashboardPage() {
   const reduce = useReducedMotion();
+  const toast = useToast();
   const workspace = useAuth((s) => s.workspace);
 
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
   const [creating, setCreating] = useState(false);
-  const [pendingDelete, setPendingDelete] = useState<WorkflowSummary | null>(null);
-  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!workspace) return;
@@ -36,7 +35,7 @@ export function DashboardPage() {
     return () => {
       alive = false;
     };
-  }, [workspace]);
+  }, [workspace, toast]);
 
   const createWorkflow = async () => {
     if (!workspace || creating) return;
@@ -50,18 +49,25 @@ export function DashboardPage() {
     }
   };
 
-  const confirmDelete = async () => {
-    if (!pendingDelete) return;
-    setDeleting(true);
+  const requestDelete = async (wf: WorkflowSummary) => {
+    const ok = await confirm({
+      title: "Delete workflow?",
+      body: (
+        <>
+          <span className="text-ink">{wf.name}</span> and its entire graph will be permanently removed. This can’t be
+          undone.
+        </>
+      ),
+      confirmLabel: "Delete",
+      destructive: true,
+    });
+    if (!ok) return;
     try {
-      await workflowApi.remove(pendingDelete.id);
-      setWorkflows((prev) => prev?.filter((w) => w.id !== pendingDelete.id) ?? null);
+      await workflowApi.remove(wf.id);
+      setWorkflows((prev) => prev?.filter((w) => w.id !== wf.id) ?? null);
       toast.success("Workflow deleted");
     } catch (err) {
       toast.error(errorMessage(err, "Could not delete workflow"));
-    } finally {
-      setDeleting(false);
-      setPendingDelete(null);
     }
   };
 
@@ -115,29 +121,13 @@ export function DashboardPage() {
                   wf={wf}
                   reduce={!!reduce}
                   onOpen={() => navigate(`/workflows/${wf.id}`)}
-                  onDelete={() => setPendingDelete(wf)}
+                  onDelete={() => requestDelete(wf)}
                 />
               ))}
             </motion.div>
           )}
         </div>
       </main>
-
-      <ConfirmDialog
-        open={Boolean(pendingDelete)}
-        title="Delete workflow?"
-        body={
-          <>
-            <span className="text-ink">{pendingDelete?.name}</span> and its entire graph will be permanently removed.
-            This can’t be undone.
-          </>
-        }
-        confirmLabel={deleting ? "Deleting…" : "Delete"}
-        destructive
-        busy={deleting}
-        onConfirm={confirmDelete}
-        onCancel={() => setPendingDelete(null)}
-      />
     </div>
   );
 }

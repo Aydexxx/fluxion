@@ -1,14 +1,17 @@
+import { useMemo, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useReactFlow } from "@xyflow/react";
-import { CATEGORIES, CATEGORY_ORDER, NODE_SPEC_LIST, type NodeSpec } from "./nodeCatalog";
+import { CATEGORIES, CATEGORY_ORDER, NODE_SPEC_LIST, matchesSpec, type NodeSpec } from "./nodeCatalog";
 import { useEditor } from "./editorStore";
 import { DRAG_MIME } from "./dragMime";
 import { riseIn, stagger, still } from "../lib/motion";
+import { CloseIcon, SearchIcon } from "../components/icons";
 
 export function NodePalette() {
   const reduce = useReducedMotion();
   const addNodeAt = useEditor((s) => s.addNodeAt);
   const reactFlow = useReactFlow();
+  const [query, setQuery] = useState("");
 
   const addToCenter = (type: string) => {
     const position = reactFlow.screenToFlowPosition({
@@ -18,6 +21,9 @@ export function NodePalette() {
     addNodeAt(type, { x: position.x - 114, y: position.y - 37 });
   };
 
+  const filtered = useMemo(() => NODE_SPEC_LIST.filter((s) => matchesSpec(s, query)), [query]);
+  const visibleCategories = CATEGORY_ORDER.filter((catId) => filtered.some((s) => s.category === catId));
+
   return (
     <aside className="flex h-full w-[264px] shrink-0 flex-col border-r border-white/8 bg-surface/40 backdrop-blur-xl">
       <div className="px-5 pb-3 pt-5">
@@ -25,29 +31,60 @@ export function NodePalette() {
         <p className="mt-0.5 text-[12px] text-faint">Drag onto the canvas, or click to drop in.</p>
       </div>
 
+      <div className="px-3 pb-2">
+        <div className="group flex items-center gap-2 rounded-lg border border-white/8 bg-void/50 px-2.5 transition-colors focus-within:border-accent/60">
+          <SearchIcon className="shrink-0 text-[14px] text-faint" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search nodes…"
+            spellCheck={false}
+            aria-label="Search nodes"
+            className="min-w-0 flex-1 bg-transparent py-2 text-[13px] text-ink outline-none placeholder:text-faint"
+          />
+          {query ? (
+            <button
+              type="button"
+              aria-label="Clear search"
+              onClick={() => setQuery("")}
+              className="shrink-0 rounded p-0.5 text-faint transition-colors hover:text-ink"
+            >
+              <CloseIcon className="text-[13px]" />
+            </button>
+          ) : null}
+        </div>
+      </div>
+
       <motion.div
+        key={query === "" ? "all" : "filtered"}
         variants={reduce ? still : stagger(0.05, 0.04)}
         initial="hidden"
         animate="show"
         className="flex-1 space-y-5 overflow-y-auto px-3 pb-6"
       >
-        {CATEGORY_ORDER.map((catId) => {
-          const cat = CATEGORIES[catId];
-          const specs = NODE_SPEC_LIST.filter((s) => s.category === catId);
-          return (
-            <div key={catId}>
-              <div className="flex items-center gap-2 px-2 pb-2">
-                <span className="size-1.5 rounded-full" style={{ background: cat.accent }} />
-                <span className="text-[10.5px] font-medium uppercase tracking-[0.16em] text-muted">{cat.label}</span>
+        {visibleCategories.length === 0 ? (
+          <p className="px-2 pt-6 text-center text-[12.5px] text-faint">
+            No nodes match “<span className="text-muted">{query}</span>”.
+          </p>
+        ) : (
+          visibleCategories.map((catId) => {
+            const cat = CATEGORIES[catId];
+            const specs = filtered.filter((s) => s.category === catId);
+            return (
+              <div key={catId}>
+                <div className="flex items-center gap-2 px-2 pb-2">
+                  <span className="size-1.5 rounded-full" style={{ background: cat.accent }} />
+                  <span className="text-[10.5px] font-medium uppercase tracking-[0.16em] text-muted">{cat.label}</span>
+                </div>
+                <div className="space-y-1.5">
+                  {specs.map((spec) => (
+                    <PaletteItem key={spec.type} spec={spec} reduce={!!reduce} onAdd={() => addToCenter(spec.type)} />
+                  ))}
+                </div>
               </div>
-              <div className="space-y-1.5">
-                {specs.map((spec) => (
-                  <PaletteItem key={spec.type} spec={spec} reduce={!!reduce} onAdd={() => addToCenter(spec.type)} />
-                ))}
-              </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </motion.div>
     </aside>
   );

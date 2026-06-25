@@ -6,6 +6,7 @@ import {
   listWorkflowRuns,
   listWorkflows,
   runWorkflow,
+  testWorkflowNodeController,
   updateWorkflow,
 } from "../controllers/workflows.controller";
 import { requireAuth } from "../middleware/auth";
@@ -14,6 +15,7 @@ import {
   createWorkflowSchema,
   listWorkflowsQuerySchema,
   runWorkflowSchema,
+  testNodeSchema,
   updateWorkflowSchema,
 } from "../validation/workflow.schemas";
 
@@ -26,5 +28,6 @@ router.put("/:id", requireAuth, validateBody(updateWorkflowSchema), updateWorkfl
 router.delete("/:id", requireAuth, deleteWorkflow);
 router.post("/:id/run", requireAuth, validateBody(runWorkflowSchema), runWorkflow);
 router.get("/:id/runs", requireAuth, listWorkflowRuns);
+router.post("/:id/nodes/:nodeId/test", requireAuth, validateBody(testNodeSchema), testWorkflowNodeController);
 
 export default router;
