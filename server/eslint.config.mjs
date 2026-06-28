@@ -22,7 +22,12 @@ export default [
     rules: {
       // Express error handlers must keep all 4 params even when unused
       // (the arity is how Express recognizes error-handling middleware).
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      // `ignoreRestSiblings` allows the `const { omit, ...rest } = obj` idiom we
+      // use to strip a property (e.g. pinnedData) from an object copy.
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_", ignoreRestSiblings: true },
+      ],
     },
   },
 ];
