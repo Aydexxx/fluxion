@@ -7,16 +7,20 @@ import {
   ChatIcon,
   DatabaseIcon,
   FilterIcon,
+  GithubIcon,
   GlobeIcon,
+  LayersIcon,
   LoopIcon,
   MailIcon,
+  NotionIcon,
+  OpenAiIcon,
   ReplyIcon,
   SparkIcon,
   TransformIcon,
   WebhookIcon,
 } from "../components/icons";
 
-export type NodeCategory = "trigger" | "action" | "ai" | "logic" | "output";
+export type NodeCategory = "trigger" | "action" | "ai" | "logic" | "flow" | "output";
 
 export interface CategoryMeta {
   id: NodeCategory;
@@ -30,10 +34,11 @@ export const CATEGORIES: Record<NodeCategory, CategoryMeta> = {
   action: { id: "action", label: "Actions", accent: "#4c9bff" },
   ai: { id: "ai", label: "Intelligence", accent: "#c26bff" },
   logic: { id: "logic", label: "Logic", accent: "#e0a33e" },
+  flow: { id: "flow", label: "Composition", accent: "#5b8def" },
   output: { id: "output", label: "Output", accent: "#34d0a8" },
 };
 
-export const CATEGORY_ORDER: NodeCategory[] = ["trigger", "action", "ai", "logic", "output"];
+export const CATEGORY_ORDER: NodeCategory[] = ["trigger", "action", "ai", "logic", "flow", "output"];
 
 export interface NodeSpec {
   type: string;
@@ -140,6 +145,28 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     hasInput: true,
     hasOutput: true,
   },
+  "action.github": {
+    type: "action.github",
+    category: "action",
+    label: "GitHub",
+    blurb: "Create an issue, comment, or dispatch a workflow",
+    icon: GithubIcon,
+    defaultTitle: "GitHub",
+    defaultConfig: { credentialId: "", action: "create_issue", repo: "", title: "", body: "" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  "action.notion": {
+    type: "action.notion",
+    category: "action",
+    label: "Notion",
+    blurb: "Create a page or append text",
+    icon: NotionIcon,
+    defaultTitle: "Notion",
+    defaultConfig: { credentialId: "", action: "create_page", parentType: "page", parentId: "", title: "" },
+    hasInput: true,
+    hasOutput: true,
+  },
   "ai.llm": {
     type: "ai.llm",
     category: "ai",
@@ -159,6 +186,17 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     icon: BotIcon,
     defaultTitle: "AI agent",
     defaultConfig: { provider: "none", model: "", goal: "", tools: ["rag_search"], knowledge: [], maxSteps: 4 },
+    hasInput: true,
+    hasOutput: true,
+  },
+  "ai.openai": {
+    type: "ai.openai",
+    category: "ai",
+    label: "OpenAI",
+    blurb: "Chat completion via the OpenAI API",
+    icon: OpenAiIcon,
+    defaultTitle: "OpenAI",
+    defaultConfig: { credentialId: "", model: "gpt-4o-mini", prompt: "" },
     hasInput: true,
     hasOutput: true,
   },
@@ -192,6 +230,17 @@ export const NODE_SPECS: Record<string, NodeSpec> = {
     icon: FilterIcon,
     defaultTitle: "Filter",
     defaultConfig: { items: "", field: "", operator: "truthy", value: "" },
+    hasInput: true,
+    hasOutput: true,
+  },
+  "flow.subworkflow": {
+    type: "flow.subworkflow",
+    category: "flow",
+    label: "Call Workflow",
+    blurb: "Run another workflow as a step",
+    icon: LayersIcon,
+    defaultTitle: "Call workflow",
+    defaultConfig: { workflowId: "", input: [{ key: "", value: "" }] },
     hasInput: true,
     hasOutput: true,
   },

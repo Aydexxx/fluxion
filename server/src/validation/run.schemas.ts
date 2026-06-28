@@ -11,7 +11,7 @@ export const listWorkspaceRunsQuerySchema = z.object({
   workspaceId: z.string().min(1, "workspaceId is required"),
   status: z.enum(["queued", "running", "success", "failed"]).optional(),
   workflowId: z.string().min(1).optional(),
-  trigger: z.enum(["manual", "webhook", "schedule"]).optional(),
+  trigger: z.enum(["manual", "webhook", "schedule", "api"]).optional(),
   /** Free-text match against workflow name or run id. */
   search: z.string().trim().min(1).max(200).optional(),
   from: isoDate.optional(),

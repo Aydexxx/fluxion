@@ -84,6 +84,29 @@ export const CREDENTIAL_TYPES: Record<string, CredentialTypeSpec> = {
     ],
     previewKey: null,
   },
+  github_token: {
+    type: "github_token",
+    label: "GitHub",
+    blurb: "A personal access token for the GitHub node.",
+    fields: [
+      { key: "token", label: "Token", secret: true, placeholder: "ghp_…" },
+      {
+        key: "baseUrl",
+        label: "API base URL",
+        secret: false,
+        optional: true,
+        placeholder: "https://api.github.com (or your GHE host)",
+      },
+    ],
+    previewKey: "token",
+  },
+  notion_token: {
+    type: "notion_token",
+    label: "Notion",
+    blurb: "An internal integration secret for the Notion node.",
+    fields: [{ key: "token", label: "Integration secret", secret: true, placeholder: "secret_…" }],
+    previewKey: "token",
+  },
 };
 
 export type CredentialType = keyof typeof CREDENTIAL_TYPES;

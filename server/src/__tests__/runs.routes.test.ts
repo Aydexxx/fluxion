@@ -204,3 +204,74 @@ describe("GET /runs/:id", () => {
     expect(missing.status).toBe(404);
   });
 });
+
+/** Drains a run with nested sub-workflow execution wired (published-version lookup). */
+async function drainRunNested(runId: string) {
+  return processRun(runId, {
+    recorder: new PrismaRunRecorder(prisma),
+    loadWorkflow: async (workflowId) => {
+      const wf = await prisma.workflow.findUnique({ where: { id: workflowId } });
+      return wf ? { definition: wf.draftDefinition as unknown as WorkflowDefinition, workspaceId: wf.workspaceId } : null;
+    },
+    loadPublishedWorkflow: async (workflowId) => {
+      const wf = await prisma.workflow.findUnique({
+        where: { id: workflowId },
+        select: { id: true, workspaceId: true, publishedDefinition: true },
+      });
+      if (!wf || wf.publishedDefinition == null) return null;
+      return { workflowId: wf.id, workspaceId: wf.workspaceId, definition: wf.publishedDefinition as unknown as WorkflowDefinition };
+    },
+    registry: createDefaultRegistry(),
+    llm: env.llm,
+  });
+}
+
+describe("GET /runs/:id — nested sub-workflow lineage", () => {
+  it("links a parent run to the nested run its Call Workflow node spawned", async () => {
+    const owner = await registerUser("Ada", "ada-nested@example.com");
+
+    // A child workflow that echoes its input, published so it can be called.
+    const childDef = {
+      nodes: [
+        { id: "ct", type: "trigger.manual", position: { x: 0, y: 0 }, config: {} },
+        { id: "cout", type: "output.response", position: { x: 200, y: 0 }, config: { body: "child:{{ trigger.topic }}" } },
+      ],
+      edges: [{ id: "ce", source: "ct", target: "cout" }],
+    };
+    const childId = await createFlow(owner.token, owner.workspaceId, childDef);
+    await request(app).post(`/workflows/${childId}/publish`).set(...authHeader(owner.token)).send({});
+
+    // A parent workflow whose Call Workflow node runs the child as a step.
+    const parentDef = {
+      nodes: [
+        { id: "pt", type: "trigger.manual", position: { x: 0, y: 0 }, config: {} },
+        { id: "call", type: "flow.subworkflow", position: { x: 200, y: 0 }, config: { workflowId: childId, input: [{ key: "topic", value: "{{ trigger.topic }}" }] } },
+        { id: "pout", type: "output.response", position: { x: 400, y: 0 }, config: { body: "{{ call.output }}" } },
+      ],
+      edges: [
+        { id: "pe1", source: "pt", target: "call" },
+        { id: "pe2", source: "call", target: "pout" },
+      ],
+    };
+    const parentId = await createFlow(owner.token, owner.workspaceId, parentDef);
+
+    const run = await request(app).post(`/workflows/${parentId}/run`).set(...authHeader(owner.token)).send({ payload: { topic: "stars" } });
+    await drainRunNested(run.body.id);
+
+    // Parent run detail surfaces the nested run, keyed to the calling node.
+    const parent = await request(app).get(`/runs/${run.body.id}`).set(...authHeader(owner.token));
+    expect(parent.status).toBe(200);
+    expect(parent.body.status).toBe("success");
+    expect(parent.body.childRuns).toHaveLength(1);
+    const child = parent.body.childRuns[0];
+    expect(child.parentNodeId).toBe("call");
+    expect(child.workflowId).toBe(childId);
+    expect(child.status).toBe("success");
+
+    // The child run detail back-references its parent.
+    const childRun = await request(app).get(`/runs/${child.id}`).set(...authHeader(owner.token));
+    expect(childRun.status).toBe(200);
+    expect(childRun.body.parentRun.id).toBe(run.body.id);
+    expect(childRun.body.parentRun.workflowId).toBe(parentId);
+  });
+});

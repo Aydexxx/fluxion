@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { currentUserId } from "../middleware/auth";
 import { getRun, getRunLogs, listWorkspaceRuns, replayRun } from "../services/runs";
-import type { WorkspaceRunsPage } from "../services/runs";
+import type { RunDetailRecord, WorkspaceRunsPage } from "../services/runs";
 import type { RunRecord } from "../engine/persistence";
 import type { RunLogEntry } from "../engine/events";
 import type { ExecutionStatusValue, RunTriggerValue } from "../engine/types";
@@ -23,7 +23,7 @@ export async function listRunsController(req: Request, res: Response<WorkspaceRu
   res.json(page);
 }
 
-export async function getRunById(req: Request<{ id: string }>, res: Response<RunRecord>): Promise<void> {
+export async function getRunById(req: Request<{ id: string }>, res: Response<RunDetailRecord>): Promise<void> {
   const run = await getRun(req.params.id, currentUserId(req));
   res.json(run);
 }

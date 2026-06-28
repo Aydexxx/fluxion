@@ -1,7 +1,7 @@
 import type { WorkflowDefinition, WorkflowNode } from "../dag/types";
 import { buildNodeScope, resolveNodeConfig } from "./nodeScope";
 import type { NodeExecutorRegistry } from "./registry";
-import { stubCredentialAccessor } from "./runWorkflow";
+import { stubCredentialAccessor, stubVariableResolver } from "./runWorkflow";
 import type {
   CredentialAccessor,
   DbQueryRunner,
@@ -10,6 +10,7 @@ import type {
   LlmSettings,
   NodeInput,
   NodeLimits,
+  VariableResolver,
 } from "./types";
 
 export interface RunSingleNodeParams {
@@ -26,6 +27,8 @@ export interface RunSingleNodeParams {
   registry: NodeExecutorRegistry;
   llm: LlmSettings;
   credentials?: CredentialAccessor;
+  /** Resolves the workspace's variables/secrets so `{{ vars.* }}`/`{{ secrets.* }}` resolve in the test. */
+  variables?: VariableResolver;
   fetchImpl?: typeof fetch;
   email?: EmailSender;
   db?: DbQueryRunner;
@@ -80,8 +83,9 @@ export async function runSingleNode(params: RunSingleNodeParams): Promise<Single
     if (parentId in outputs) sources[parentId] = outputs[parentId];
   }
 
+  const variables = await (params.variables ?? stubVariableResolver).resolve();
   const config = params.configOverride ?? node.config;
-  const scope = buildNodeScope(params.trigger, outputs, sources);
+  const scope = buildNodeScope(params.trigger, outputs, sources, variables);
   const resolvedNode: WorkflowNode = resolveNodeConfig({ ...node, config }, scope);
 
   const input: NodeInput = { trigger: params.trigger, sources };

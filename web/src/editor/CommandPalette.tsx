@@ -10,6 +10,7 @@ import { navigate } from "../lib/router";
 import { useToast } from "../components/ui/toast";
 import { EASE } from "../lib/motion";
 import {
+  BracesIcon,
   FrameIcon,
   GridIcon,
   HistoryIcon,
@@ -135,6 +136,14 @@ function PaletteBody({ reduce, onClose }: { reduce: boolean; onClose: () => void
         icon: KeyIcon,
         keywords: "secrets vault keys",
         run: () => useEditor.getState().setCredentialsManagerOpen(true),
+      },
+      {
+        id: "variables",
+        title: "Manage variables & secrets",
+        group: "Actions",
+        icon: BracesIcon,
+        keywords: "vars secrets environment config",
+        run: () => useEditor.getState().setVariablesManagerOpen(true),
       },
       {
         id: "shortcuts",

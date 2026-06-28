@@ -29,11 +29,22 @@ export async function createWorkflow(
   res.status(201).json(workflow);
 }
 
+/** GET /workflows?workspaceId=&search=&folderId=&tagId=&isActive=&sortBy=&sortDir= */
 export async function listWorkflows(
   req: Request<unknown, unknown, unknown, ListWorkflowsQuery>,
   res: Response<SafeWorkflowSummary[]>,
 ): Promise<void> {
-  const workflows = await workflowService.listWorkflows(req.query.workspaceId, currentUserId(req));
+  // Shape is already guaranteed by validateQuery(listWorkflowsQuerySchema); read
+  // as raw strings since Express 5's req.query can't be rewritten with the parsed result.
+  const q = req.query as unknown as Record<string, string | undefined>;
+  const workflows = await workflowService.listWorkflows(String(q.workspaceId), currentUserId(req), {
+    search: q.search,
+    folderId: q.folderId,
+    tagId: q.tagId,
+    isActive: q.isActive === undefined ? undefined : q.isActive === "true",
+    sortBy: q.sortBy as "updatedAt" | "createdAt" | "name" | undefined,
+    sortDir: q.sortDir as "asc" | "desc" | undefined,
+  });
   res.json(workflows);
 }
 

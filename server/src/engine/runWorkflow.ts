@@ -12,13 +12,23 @@ import type {
   LlmSettings,
   NodeInput,
   NodeLimits,
+  ResolvedVariables,
   RunTriggerValue,
+  SubworkflowRunner,
+  VariableResolver,
 } from "./types";
 
 /** Default accessor for runs with no credential store wired (tests, dry runs): resolves nothing. */
 export const stubCredentialAccessor: CredentialAccessor = {
   async resolve() {
     return null;
+  },
+};
+
+/** Default resolver for runs with no variable store wired (tests, dry runs): no vars or secrets. */
+export const stubVariableResolver: VariableResolver = {
+  async resolve() {
+    return { vars: {}, secrets: {} };
   },
 };
 
@@ -33,6 +43,8 @@ export interface RunWorkflowParams {
   recorder: RunRecorder;
   llm: LlmSettings;
   credentials?: CredentialAccessor;
+  /** Resolves the workspace's variables/secrets for this run (decrypted on the worker). */
+  variables?: VariableResolver;
   fetchImpl?: typeof fetch;
   /** Mail transport for the email node (worker injects a real SMTP sender). */
   email?: EmailSender;
@@ -40,6 +52,8 @@ export interface RunWorkflowParams {
   db?: DbQueryRunner;
   /** Default per-node time budgets (worker injects from env). */
   limits?: NodeLimits;
+  /** Runs nested sub-workflows for the `flow.subworkflow` node (worker/runner injects). */
+  subworkflows?: SubworkflowRunner;
   /** Receives lifecycle events for real-time status propagation. */
   onEvent?: RunEventSink;
   /** Receives structured log lines for live streaming (persistence is via the recorder). */
@@ -131,6 +145,10 @@ export async function runWorkflow(params: RunWorkflowParams): Promise<RunRecord>
   emit({ type: "run:started", runId, workflowId: params.workflowId });
   await log("info", `Run started · ${nodes.length} node(s), trigger: ${trigger.type}`);
 
+  // Resolve the workspace's variables/secrets once for the whole run, so every
+  // node's `{{ vars.* }}` / `{{ secrets.* }}` references share one decrypt pass.
+  const variables: ResolvedVariables = await (params.variables ?? stubVariableResolver).resolve();
+
   const context: ExecutionContext = {
     workspaceId: params.workspaceId,
     trigger: trigger.payload,
@@ -140,6 +158,7 @@ export async function runWorkflow(params: RunWorkflowParams): Promise<RunRecord>
     email: params.email,
     db: params.db,
     limits: params.limits,
+    subworkflows: params.subworkflows,
   };
 
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
@@ -193,7 +212,10 @@ export async function runWorkflow(params: RunWorkflowParams): Promise<RunRecord>
     }
 
     const policy = readErrorConfig(node.config);
-    const resolvedNode = resolveNodeConfig(node, buildNodeScope(trigger.payload, Object.fromEntries(outputs), sources));
+    const resolvedNode = resolveNodeConfig(
+      node,
+      buildNodeScope(trigger.payload, Object.fromEntries(outputs), sources, variables),
+    );
 
     // Per-node retry: re-invoke up to maxAttempts before the failure is final.
     // This overrides relying on the global queue retry, which re-runs the whole

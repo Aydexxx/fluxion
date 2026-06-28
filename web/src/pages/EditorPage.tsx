@@ -16,6 +16,7 @@ import { FailureAlertDialog } from "../editor/FailureAlertDialog";
 import { useEditorShortcuts } from "../editor/useEditorShortcuts";
 import { connectPresence, disconnectPresence, sendSelection } from "../editor/presence";
 import { CredentialsManager } from "../components/CredentialsManager";
+import { VariablesManager } from "../components/VariablesManager";
 import { navigate } from "../lib/router";
 import { Logo, SpinnerIcon } from "../components/icons";
 
@@ -28,6 +29,9 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
   const credentialsManagerOpen = useEditor((s) => s.credentialsManagerOpen);
   const setCredentialsManagerOpen = useEditor((s) => s.setCredentialsManagerOpen);
   const refreshCredentials = useEditor((s) => s.refreshCredentials);
+  const variablesManagerOpen = useEditor((s) => s.variablesManagerOpen);
+  const setVariablesManagerOpen = useEditor((s) => s.setVariablesManagerOpen);
+  const refreshVariables = useEditor((s) => s.refreshVariables);
   // While previewing a past version the editor is read-only: no palette, no inspector.
   const previewing = useEditor((s) => s.previewVersion !== null);
   const applyRemoteGraphOps = useEditor((s) => s.applyRemoteGraphOps);
@@ -84,6 +88,14 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
         onClose={() => {
           setCredentialsManagerOpen(false);
           void refreshCredentials();
+        }}
+      />
+      <VariablesManager
+        open={variablesManagerOpen}
+        workspaceId={workspaceId}
+        onClose={() => {
+          setVariablesManagerOpen(false);
+          void refreshVariables();
         }}
       />
     </ReactFlowProvider>

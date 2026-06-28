@@ -6,6 +6,7 @@ import { getCredentialTypeSpec } from "../credentials/catalog";
 import type { CredentialAccessor, CredentialSecret } from "../engine/types";
 import { NotFoundError, ValidationError } from "../errors/HttpError";
 import { requireWorkspaceMember, requireWorkspaceRole } from "./authorization";
+import { AUDIT_ACTIONS, safeRecordAudit } from "./audit";
 
 /**
  * Client-safe view of a credential. Deliberately omits every secret field:
@@ -100,7 +101,7 @@ export async function listCredentials(workspaceId: string, userId: string): Prom
 }
 
 export async function createCredential(userId: string, input: CreateCredentialInput): Promise<SafeCredential> {
-  await requireWorkspaceMember(input.workspaceId, userId);
+  await requireWorkspaceRole(input.workspaceId, userId, "editor");
   const clean = cleanCredentialData(input.type, input.data);
   const row = await prisma.credential.create({
     data: {
@@ -110,6 +111,17 @@ export async function createCredential(userId: string, input: CreateCredentialIn
       encryptedData: encryptSecret(JSON.stringify(clean), env.credentialsKey),
     },
   });
+
+  await safeRecordAudit({
+    workspaceId: input.workspaceId,
+    action: AUDIT_ACTIONS.credentialCreated,
+    actorId: userId,
+    targetType: "credential",
+    targetId: row.id,
+    targetName: row.name,
+    metadata: { type: row.type },
+  });
+
   return toSafeCredential(row);
 }
 
@@ -120,7 +132,7 @@ export async function updateCredential(
 ): Promise<SafeCredential> {
   const existing = await prisma.credential.findUnique({ where: { id: credentialId } });
   if (!existing) throw new NotFoundError("Credential not found");
-  await requireWorkspaceMember(existing.workspaceId, userId);
+  await requireWorkspaceRole(existing.workspaceId, userId, "editor");
 
   const data: { name?: string; encryptedData?: string } = {};
   if (input.name !== undefined) data.name = input.name;
@@ -139,6 +151,16 @@ export async function deleteCredential(credentialId: string, userId: string): Pr
   // Deleting a secret is an admin-tier action, mirroring workflow deletion.
   await requireWorkspaceRole(existing.workspaceId, userId, "admin");
   await prisma.credential.delete({ where: { id: credentialId } });
+
+  await safeRecordAudit({
+    workspaceId: existing.workspaceId,
+    action: AUDIT_ACTIONS.credentialDeleted,
+    actorId: userId,
+    targetType: "credential",
+    targetId: existing.id,
+    targetName: existing.name,
+    metadata: { type: existing.type },
+  });
 }
 
 /**

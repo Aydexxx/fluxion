@@ -25,7 +25,7 @@ export async function enqueueRunForWorkflow(
   workflowId: string,
   trigger: RunTriggerValue,
   payload: unknown,
-  options: { replayOfId?: string; definition?: WorkflowDefinition } = {},
+  options: { replayOfId?: string; definition?: WorkflowDefinition; triggeredById?: string } = {},
 ): Promise<RunRecord> {
   const workflow = await prisma.workflow.findUnique({
     where: { id: workflowId },
@@ -46,6 +46,7 @@ export async function enqueueRunForWorkflow(
     payload,
     definition,
     replayOfId: options.replayOfId ?? null,
+    triggeredById: options.triggeredById ?? null,
   });
   await enqueueWorkflowRun({ runId, workflowId, payload });
 
@@ -65,7 +66,7 @@ export async function replayRun(runId: string, userId: string): Promise<RunRecor
   if (!origin) throw new NotFoundError("Run not found");
 
   const workspaceId = await resolveWorkflowWorkspaceId(origin.workflowId);
-  await requireWorkspaceRole(workspaceId, userId, "member");
+  await requireWorkspaceRole(workspaceId, userId, "editor");
 
   // A true replay re-runs the *exact* definition the origin executed (its
   // snapshot), not whatever the draft/published happens to be now. Older runs
@@ -74,6 +75,7 @@ export async function replayRun(runId: string, userId: string): Promise<RunRecor
   return enqueueRunForWorkflow(origin.workflowId, origin.trigger as RunTriggerValue, origin.payload, {
     replayOfId: origin.id,
     definition,
+    triggeredById: userId,
   });
 }
 
@@ -88,8 +90,8 @@ export async function runWorkflowById(
   payload: unknown,
 ): Promise<RunRecord> {
   const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
-  await requireWorkspaceRole(workspaceId, userId, "member");
-  return enqueueRunForWorkflow(workflowId, "manual", payload);
+  await requireWorkspaceRole(workspaceId, userId, "editor");
+  return enqueueRunForWorkflow(workflowId, "manual", payload, { triggeredById: userId });
 }
 
 /** Lightweight run record for history lists — no per-node executions. */
@@ -266,13 +268,66 @@ export async function listRuns(workflowId: string, userId: string): Promise<RunS
   return runs.map(toSummary);
 }
 
-/** Loads a single run with its node executions, authorizing via the run's workspace. */
-export async function getRun(runId: string, userId: string): Promise<RunRecord> {
-  const run = await prisma.workflowRun.findUnique({ where: { id: runId }, select: { workflowId: true } });
+/** A nested sub-workflow run spawned by a `flow.subworkflow` node in this run. */
+export interface NestedRunRef {
+  id: string;
+  /** The Call Workflow node in *this* run that spawned the nested run (timeline linkage). */
+  parentNodeId: string | null;
+  workflowId: string;
+  workflowName: string;
+  status: ExecutionStatusValue;
+  error: string | null;
+}
+
+/** A run's full detail, plus the lineage needed to render sub-workflow nesting. */
+export interface RunDetailRecord extends RunRecord {
+  /** When this run is itself a nested run, a back-reference to its parent. */
+  parentRun: { id: string; workflowId: string; workflowName: string } | null;
+  /** Sub-workflow runs this run spawned, keyed back to their calling node. */
+  childRuns: NestedRunRef[];
+}
+
+/**
+ * Loads a single run with its node executions, authorizing via the run's
+ * workspace. Enriches with sub-workflow lineage: the parent run (if this is a
+ * nested run) and any nested runs it spawned, so the timeline can render and
+ * link the nesting.
+ */
+export async function getRun(runId: string, userId: string): Promise<RunDetailRecord> {
+  const run = await prisma.workflowRun.findUnique({
+    where: { id: runId },
+    select: { workflowId: true, parentRunId: true },
+  });
   if (!run) throw new NotFoundError("Run not found");
 
   const workspaceId = await resolveWorkflowWorkspaceId(run.workflowId);
   await requireWorkspaceMember(workspaceId, userId);
 
-  return new PrismaRunRecorder(prisma).getRun(runId);
+  const [record, children, parent] = await Promise.all([
+    new PrismaRunRecorder(prisma).getRun(runId),
+    prisma.workflowRun.findMany({
+      where: { parentRunId: runId },
+      select: { id: true, parentNodeId: true, workflowId: true, status: true, error: true, workflow: { select: { name: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
+    run.parentRunId
+      ? prisma.workflowRun.findUnique({
+          where: { id: run.parentRunId },
+          select: { id: true, workflowId: true, workflow: { select: { name: true } } },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  return {
+    ...record,
+    parentRun: parent ? { id: parent.id, workflowId: parent.workflowId, workflowName: parent.workflow.name } : null,
+    childRuns: children.map((c) => ({
+      id: c.id,
+      parentNodeId: c.parentNodeId ?? null,
+      workflowId: c.workflowId,
+      workflowName: c.workflow.name,
+      status: c.status as ExecutionStatusValue,
+      error: c.error,
+    })),
+  };
 }

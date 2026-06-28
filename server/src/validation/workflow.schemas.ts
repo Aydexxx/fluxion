@@ -29,10 +29,16 @@ export const workflowDefinitionSchema = z.object({
   edges: z.array(workflowEdgeSchema).default([]),
 });
 
+/** Tags are normalized (trimmed + lowercased) by the service; cap count and length here. */
+const tagsSchema = z.array(z.string().trim().min(1).max(40)).max(20);
+
 export const createWorkflowSchema = z.object({
   workspaceId: z.string().min(1, "workspaceId is required"),
   name: z.string().trim().min(1, "Name is required").max(150, "Name is too long"),
   description: z.string().trim().max(2000, "Description is too long").optional(),
+  /** Folder to file this workflow under at creation; omit to leave it unfiled. */
+  folderId: z.string().min(1).optional(),
+  tags: tagsSchema.optional(),
 });
 
 /** Workflow-level failure-alert config. `null` clears it. Email requires a `to`. */
@@ -55,11 +61,23 @@ export const updateWorkflowSchema = z
     isActive: z.boolean().optional(),
     definition: workflowDefinitionSchema.optional(),
     failureNotify: failureNotifySchema.optional(),
+    /** Move into a folder, or `null` to un-file it. Omit to leave unchanged. */
+    folderId: z.string().min(1).nullable().optional(),
+    /** Replaces the full tag set. Omit to leave unchanged; `[]` clears all tags. */
+    tags: tagsSchema.optional(),
   })
   .refine(hasAtLeastOneField, { message: "At least one field must be provided" });
 
 export const listWorkflowsQuerySchema = z.object({
   workspaceId: z.string().min(1, "workspaceId query parameter is required"),
+  /** Free-text match against workflow name or description. */
+  search: z.string().trim().min(1).max(200).optional(),
+  /** Filter to a single folder; the literal "none" means unfiled workflows. */
+  folderId: z.string().min(1).optional(),
+  tagId: z.string().min(1).optional(),
+  isActive: z.enum(["true", "false"]).optional(),
+  sortBy: z.enum(["updatedAt", "createdAt", "name"]).default("updatedAt"),
+  sortDir: z.enum(["asc", "desc"]).default("desc"),
 });
 
 /** Body for a manual run: an optional freeform trigger payload handed to the workflow. */

@@ -2,14 +2,23 @@ import { type WorkspaceMember as PrismaWorkspaceMember, type WorkspaceRole } fro
 import { prisma } from "./prisma";
 import { ForbiddenError, NotFoundError } from "../errors/HttpError";
 
-/** Numeric privilege rank per role; higher can do everything a lower rank can. */
-const ROLE_RANK: Record<WorkspaceRole, number> = {
-  owner: 3,
-  admin: 2,
-  member: 1,
+/**
+ * Numeric privilege rank per role; higher can do everything a lower rank can.
+ *
+ *   viewer  read-only (workflows, runs, analytics)
+ *   editor  + create/edit/run/publish workflows, manage credentials
+ *   admin   + manage members (except owners), delete workflows/credentials
+ *   owner   + manage owners/roles, delete the workspace
+ */
+export const ROLE_RANK: Record<WorkspaceRole, number> = {
+  owner: 4,
+  admin: 3,
+  editor: 2,
+  viewer: 1,
 };
 
-function roleAtLeast(role: WorkspaceRole, minRole: WorkspaceRole): boolean {
+/** True when `role` is at least as privileged as `minRole`. */
+export function roleAtLeast(role: WorkspaceRole, minRole: WorkspaceRole): boolean {
   return ROLE_RANK[role] >= ROLE_RANK[minRole];
 }
 

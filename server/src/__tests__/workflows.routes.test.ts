@@ -34,7 +34,11 @@ function authHeader(token: string): [string, string] {
   return ["Authorization", `Bearer ${token}`];
 }
 
-async function addMember(workspaceId: string, userId: string, role: "owner" | "admin" | "member"): Promise<void> {
+async function addMember(
+  workspaceId: string,
+  userId: string,
+  role: "owner" | "admin" | "editor" | "viewer",
+): Promise<void> {
   await prisma.workspaceMember.create({ data: { workspaceId, userId, role } });
 }
 
@@ -355,10 +359,10 @@ describe("DELETE /workflows/:id (RBAC enforcement)", () => {
     expect(res.status).toBe(204);
   });
 
-  it("forbids a plain member from deleting a workflow", async () => {
+  it("forbids an editor from deleting a workflow (delete is admin-tier)", async () => {
     const owner = await registerUser("Ada Lovelace", "ada18@example.com");
     const member = await registerUser("Mira Member", "member18@example.com");
-    await addMember(owner.workspaceId, member.userId, "member");
+    await addMember(owner.workspaceId, member.userId, "editor");
     const created = await createWorkflow(owner.token, owner.workspaceId, "Workflow A");
 
     const res = await request(app)

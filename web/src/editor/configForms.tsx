@@ -1,8 +1,10 @@
-import type { ComponentType } from "react";
+import { type ComponentType, useEffect, useState } from "react";
 import { FieldShell, Select, TextArea, TextInput } from "../components/Field";
 import { CopyIcon, PlusIcon, TrashIcon } from "../components/icons";
 import { useEditor } from "./editorStore";
 import { ExpressionInput } from "./ExpressionInput";
+import { workflowApi, errorMessage } from "../lib/api";
+import type { WorkflowSummary } from "../lib/types";
 import { toast } from "../store/toasts";
 
 export interface ConfigFormProps {
@@ -267,6 +269,48 @@ function AiForm({ nodeId, config, onChange }: ConfigFormProps) {
   );
 }
 
+/* ── ai.openai — direct OpenAI chat completion ──────────────────────────── */
+function OpenAiForm({ nodeId, config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  return (
+    <div className="space-y-4">
+      <CredentialPicker credType="openai" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
+      <p className="-mt-1 text-[11.5px] leading-relaxed text-faint">
+        With no credential selected, this node returns a deterministic offline stub — handy for building and testing a
+        flow before a real key exists.
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <FieldShell label="Model">
+          <TextInput placeholder="gpt-4o-mini" value={str(config.model, "gpt-4o-mini")} onChange={(e) => set({ model: e.target.value })} />
+        </FieldShell>
+        <FieldShell label="Temperature" hint="Optional, 0–2.">
+          <TextInput
+            type="number"
+            min={0}
+            max={2}
+            step={0.1}
+            placeholder="(default)"
+            value={typeof config.temperature === "number" ? String(config.temperature) : ""}
+            onChange={(e) => set({ temperature: e.target.value === "" ? undefined : Number(e.target.value) })}
+          />
+        </FieldShell>
+      </div>
+      <FieldShell label="System message" hint="Optional. Sets the assistant's behavior ahead of the prompt.">
+        <ExpressionInput nodeId={nodeId} rows={2} placeholder="You are a concise assistant." value={str(config.system)} onChange={(system) => set({ system })} />
+      </FieldShell>
+      <FieldShell label="Prompt" hint="Reference upstream output with {{ }} placeholders, e.g. {{ input.text }}.">
+        <ExpressionInput
+          nodeId={nodeId}
+          rows={6}
+          placeholder={"Summarize the following in three bullets:\n\n{{ input.text }}"}
+          value={str(config.prompt)}
+          onChange={(prompt) => set({ prompt })}
+        />
+      </FieldShell>
+    </div>
+  );
+}
+
 /* ── credential picker (shared by secret-using nodes) ───────────────────── */
 function CredentialPicker({ credType, value, onChange }: { credType: string; value: string; onChange: (id: string) => void }) {
   const credentials = useEditor((s) => s.credentials);
@@ -361,6 +405,176 @@ function DatabaseForm({ nodeId, config, onChange }: ConfigFormProps) {
           <option value="write">Allow writes</option>
         </Select>
       </FieldShell>
+    </div>
+  );
+}
+
+/* ── action.github ───────────────────────────────────────────────────────── */
+const GITHUB_ACTIONS = [
+  { value: "create_issue", label: "Create issue" },
+  { value: "add_comment", label: "Add comment" },
+  { value: "dispatch_workflow", label: "Dispatch workflow" },
+];
+
+function GithubForm({ nodeId, config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const action = str(config.action, "create_issue");
+  const rawInputs = config.inputs;
+  const inputs: Mapping[] = Array.isArray(rawInputs)
+    ? rawInputs.map((m) => ({ key: str((m as Mapping)?.key), value: str((m as Mapping)?.value) }))
+    : [{ key: "", value: "" }];
+  const commitInputs = (next: Mapping[]) => set({ inputs: next });
+
+  return (
+    <div className="space-y-4">
+      <CredentialPicker credType="github_token" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
+      <div className="grid grid-cols-[8.5rem_1fr] gap-2">
+        <FieldShell label="Action">
+          <Select value={action} onChange={(e) => set({ action: e.target.value })}>
+            {GITHUB_ACTIONS.map((a) => (
+              <option key={a.value} value={a.value}>
+                {a.label}
+              </option>
+            ))}
+          </Select>
+        </FieldShell>
+        <FieldShell label="Repository">
+          <ExpressionInput nodeId={nodeId} singleLine placeholder="owner/repo" value={str(config.repo)} onChange={(repo) => set({ repo })} />
+        </FieldShell>
+      </div>
+
+      {action === "create_issue" ? (
+        <>
+          <FieldShell label="Title">
+            <ExpressionInput nodeId={nodeId} singleLine placeholder="{{ input.summary }}" value={str(config.title)} onChange={(title) => set({ title })} />
+          </FieldShell>
+          <FieldShell label="Body">
+            <ExpressionInput nodeId={nodeId} rows={4} placeholder="Issue description…" value={str(config.body)} onChange={(body) => set({ body })} />
+          </FieldShell>
+          <FieldShell label="Labels" hint="Comma-separated.">
+            <TextInput placeholder="bug, urgent" value={str(config.labels)} onChange={(e) => set({ labels: e.target.value })} />
+          </FieldShell>
+        </>
+      ) : action === "add_comment" ? (
+        <>
+          <FieldShell label="Issue number">
+            <ExpressionInput nodeId={nodeId} singleLine placeholder="{{ input.issueNumber }}" value={str(config.issueNumber)} onChange={(issueNumber) => set({ issueNumber })} />
+          </FieldShell>
+          <FieldShell label="Comment body">
+            <ExpressionInput nodeId={nodeId} rows={4} placeholder="Comment text…" value={str(config.body)} onChange={(body) => set({ body })} />
+          </FieldShell>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <FieldShell label="Workflow file" hint="e.g. deploy.yml">
+              <TextInput placeholder="deploy.yml" value={str(config.workflowFile)} onChange={(e) => set({ workflowFile: e.target.value })} />
+            </FieldShell>
+            <FieldShell label="Ref" hint="Branch or tag">
+              <TextInput placeholder="main" value={str(config.ref, "main")} onChange={(e) => set({ ref: e.target.value })} />
+            </FieldShell>
+          </div>
+          <FieldShell label="Inputs" hint="Passed to the workflow_dispatch event.">
+            <div className="space-y-2">
+              {inputs.map((m, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <div className="w-[34%] shrink-0 pt-1.5">
+                    <TextInput placeholder="key" value={m.key} onChange={(e) => commitInputs(inputs.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))} />
+                  </div>
+                  <span className="pt-3 text-faint">→</span>
+                  <div className="min-w-0 flex-1">
+                    <ExpressionInput
+                      nodeId={nodeId}
+                      singleLine
+                      placeholder="{{ input.value }}"
+                      value={m.value}
+                      onChange={(value) => commitInputs(inputs.map((x, j) => (j === i ? { ...x, value } : x)))}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    aria-label="Remove input"
+                    onClick={() => commitInputs(inputs.filter((_, j) => j !== i))}
+                    className="mt-1.5 shrink-0 rounded-md p-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink"
+                  >
+                    <TrashIcon />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => commitInputs([...inputs, { key: "", value: "" }])}
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-accent-bright transition-colors hover:bg-accent/10"
+              >
+                <PlusIcon className="text-[14px]" /> Add input
+              </button>
+            </div>
+          </FieldShell>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* ── action.notion ───────────────────────────────────────────────────────── */
+const NOTION_ACTIONS = [
+  { value: "create_page", label: "Create page" },
+  { value: "append_text", label: "Append text" },
+];
+
+function NotionForm({ nodeId, config, onChange }: ConfigFormProps) {
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const action = str(config.action, "create_page");
+  const parentType = str(config.parentType, "page");
+
+  return (
+    <div className="space-y-4">
+      <CredentialPicker credType="notion_token" value={str(config.credentialId)} onChange={(id) => set({ credentialId: id })} />
+      <FieldShell label="Action">
+        <Select value={action} onChange={(e) => set({ action: e.target.value })}>
+          {NOTION_ACTIONS.map((a) => (
+            <option key={a.value} value={a.value}>
+              {a.label}
+            </option>
+          ))}
+        </Select>
+      </FieldShell>
+
+      {action === "create_page" ? (
+        <>
+          <div className="grid grid-cols-[8.5rem_1fr] gap-2">
+            <FieldShell label="Parent">
+              <Select value={parentType} onChange={(e) => set({ parentType: e.target.value })}>
+                <option value="page">Page</option>
+                <option value="database">Database</option>
+              </Select>
+            </FieldShell>
+            <FieldShell label="Parent ID">
+              <ExpressionInput nodeId={nodeId} singleLine placeholder="Notion page or database id" value={str(config.parentId)} onChange={(parentId) => set({ parentId })} />
+            </FieldShell>
+          </div>
+          {parentType === "database" ? (
+            <FieldShell label="Title property" hint="The database's title-type column name (default 'Name').">
+              <TextInput placeholder="Name" value={str(config.titleProperty)} onChange={(e) => set({ titleProperty: e.target.value })} />
+            </FieldShell>
+          ) : null}
+          <FieldShell label="Title">
+            <ExpressionInput nodeId={nodeId} singleLine placeholder="{{ input.title }}" value={str(config.title)} onChange={(title) => set({ title })} />
+          </FieldShell>
+          <FieldShell label="Content" hint="Optional opening paragraph for the new page.">
+            <ExpressionInput nodeId={nodeId} rows={3} placeholder="Page body…" value={str(config.content)} onChange={(content) => set({ content })} />
+          </FieldShell>
+        </>
+      ) : (
+        <>
+          <FieldShell label="Page ID">
+            <ExpressionInput nodeId={nodeId} singleLine placeholder="{{ input.pageId }}" value={str(config.pageId)} onChange={(pageId) => set({ pageId })} />
+          </FieldShell>
+          <FieldShell label="Text" hint="Appended as a new paragraph block.">
+            <ExpressionInput nodeId={nodeId} rows={3} placeholder="{{ input.update }}" value={str(config.text)} onChange={(text) => set({ text })} />
+          </FieldShell>
+        </>
+      )}
     </div>
   );
 }
@@ -551,6 +765,110 @@ function ConditionForm({ nodeId, config, onChange }: ConfigFormProps) {
   );
 }
 
+/* ── flow.subworkflow — call another workflow as a step ─────────────────── */
+function SubworkflowForm({ nodeId, config, onChange }: ConfigFormProps) {
+  const workspaceId = useEditor((s) => s.workspaceId);
+  const currentWorkflowId = useEditor((s) => s.id);
+  const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Load the workspace's other workflows for the target picker. A workflow can't
+  // pick itself (that's an immediate cycle); the engine guards deeper cycles too.
+  useEffect(() => {
+    if (!workspaceId) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const list = await workflowApi.list(workspaceId);
+        if (alive) setWorkflows(list.filter((w) => w.id !== currentWorkflowId));
+      } catch (err) {
+        if (alive) setLoadError(errorMessage(err, "Couldn’t load workflows"));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [workspaceId, currentWorkflowId]);
+
+  const set = (patch: Record<string, unknown>) => onChange({ ...config, ...patch });
+  const targetId = str(config.workflowId);
+  const rawInput = config.input;
+  const mappings: Mapping[] = Array.isArray(rawInput)
+    ? rawInput.map((m) => ({ key: str((m as Mapping)?.key), value: str((m as Mapping)?.value) }))
+    : [{ key: "", value: "" }];
+  const commitInput = (next: Mapping[]) => set({ input: next });
+  const selectedMissing = targetId !== "" && workflows !== null && !workflows.some((w) => w.id === targetId);
+
+  return (
+    <div className="space-y-4">
+      <FieldShell label="Target workflow" hint="Calls this workflow’s published version as a nested run.">
+        {loadError ? (
+          <p className="text-[12px] text-red-300">{loadError}</p>
+        ) : (
+          <Select value={targetId} onChange={(e) => set({ workflowId: e.target.value })}>
+            <option value="">{workflows === null ? "Loading…" : "Select a workflow…"}</option>
+            {selectedMissing ? <option value={targetId}>{targetId} (unavailable)</option> : null}
+            {(workflows ?? []).map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name}
+                {w.isActive ? "" : " (inactive)"}
+              </option>
+            ))}
+          </Select>
+        )}
+        {workflows !== null && workflows.length === 0 ? (
+          <p className="mt-1.5 text-[11.5px] text-faint">No other workflows in this workspace yet.</p>
+        ) : null}
+      </FieldShell>
+
+      <FieldShell label="Input mapping" hint="Map keys to expressions; the sub-workflow receives them as its trigger payload.">
+        <div className="space-y-2">
+          {mappings.map((m, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <div className="w-[34%] shrink-0 pt-1.5">
+                <TextInput
+                  placeholder="key"
+                  value={m.key}
+                  onChange={(e) => commitInput(mappings.map((x, j) => (j === i ? { ...x, key: e.target.value } : x)))}
+                />
+              </div>
+              <span className="pt-3 text-faint">←</span>
+              <div className="min-w-0 flex-1">
+                <ExpressionInput
+                  nodeId={nodeId}
+                  singleLine
+                  placeholder="{{ input.value }}"
+                  value={m.value}
+                  onChange={(value) => commitInput(mappings.map((x, j) => (j === i ? { ...x, value } : x)))}
+                />
+              </div>
+              <button
+                type="button"
+                aria-label="Remove mapping"
+                onClick={() => commitInput(mappings.filter((_, j) => j !== i))}
+                className="mt-1.5 shrink-0 rounded-md p-1.5 text-faint transition-colors hover:bg-white/5 hover:text-ink"
+              >
+                <TrashIcon />
+              </button>
+            </div>
+          ))}
+          <button
+            type="button"
+            onClick={() => commitInput([...mappings, { key: "", value: "" }])}
+            className="inline-flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-medium text-accent-bright transition-colors hover:bg-accent/10"
+          >
+            <PlusIcon className="text-[14px]" /> Add field
+          </button>
+        </div>
+      </FieldShell>
+      <p className="-mt-1 text-[11.5px] leading-relaxed text-faint">
+        The node’s output is the sub-workflow’s result — read it via{" "}
+        <span className="font-mono text-[11px]">{"{{ " + nodeId + ".output }}"}</span>.
+      </p>
+    </div>
+  );
+}
+
 /* ── output.response ────────────────────────────────────────────────────── */
 function ResponseForm({ nodeId, config, onChange }: ConfigFormProps) {
   return (
@@ -653,11 +971,15 @@ const FORMS: Record<string, ComponentType<ConfigFormProps>> = {
   "action.email": EmailForm,
   "action.slack": SlackForm,
   "action.database": DatabaseForm,
+  "action.github": GithubForm,
+  "action.notion": NotionForm,
   "ai.llm": AiForm,
   "ai.agent": AgentForm,
+  "ai.openai": OpenAiForm,
   "logic.condition": ConditionForm,
   "logic.loop": LoopForm,
   "logic.filter": FilterForm,
+  "flow.subworkflow": SubworkflowForm,
   "output.response": ResponseForm,
 };
 

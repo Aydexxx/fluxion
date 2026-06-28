@@ -2,11 +2,14 @@ import { motion, useReducedMotion } from "framer-motion";
 import { useEditor } from "./editorStore";
 import { PresenceAvatars } from "./PresenceAvatars";
 import { navigate } from "../lib/router";
+import { useAuth } from "../store/auth";
+import { canEdit as roleCanEdit } from "../lib/permissions";
 import { useToast } from "../components/ui/toast";
 import {
   AlertIcon,
   ChevronRightIcon,
   CloseIcon,
+  GridIcon,
   HistoryIcon,
   LayersIcon,
   Logo,
@@ -17,6 +20,13 @@ import {
   SpinnerIcon,
   UploadIcon,
 } from "../components/icons";
+
+/** Whether the current user may edit/run/publish the open workflow (its workspace role). */
+function useCanEditWorkflow(): boolean {
+  const workspaceId = useEditor((s) => s.workspaceId);
+  const workspaces = useAuth((s) => s.workspaces);
+  return roleCanEdit(workspaces.find((w) => w.id === workspaceId)?.role);
+}
 
 export function EditorTopBar() {
   const reduce = useReducedMotion();
@@ -33,6 +43,7 @@ export function EditorTopBar() {
   const setHistoryOpen = useEditor((s) => s.setHistoryOpen);
   const setCommandPaletteOpen = useEditor((s) => s.setCommandPaletteOpen);
   const previewVersion = useEditor((s) => s.previewVersion);
+  const canEdit = useCanEditWorkflow();
 
   // While previewing a past version the editor is read-only; show a focused banner instead.
   if (previewVersion) return <PreviewBanner />;
@@ -89,9 +100,10 @@ export function EditorTopBar() {
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
+          readOnly={!canEdit}
           spellCheck={false}
           placeholder="Untitled workflow"
-          className="min-w-0 max-w-[360px] flex-1 truncate rounded-md bg-transparent px-1.5 py-1 font-display text-[15px] font-semibold text-ink outline-none transition-colors hover:bg-white/[0.03] focus:bg-white/5 placeholder:text-faint"
+          className="min-w-0 max-w-[360px] flex-1 truncate rounded-md bg-transparent px-1.5 py-1 font-display text-[15px] font-semibold text-ink outline-none transition-colors hover:bg-white/[0.03] focus:bg-white/5 placeholder:text-faint read-only:hover:bg-transparent"
         />
         <SaveState dirty={dirty} saving={saving} />
         <PublishBadge />
@@ -99,7 +111,7 @@ export function EditorTopBar() {
 
       <PresenceAvatars />
 
-      <ActiveToggle active={isActive} onToggle={() => setActive(!isActive)} reduce={!!reduce} />
+      {canEdit ? <ActiveToggle active={isActive} onToggle={() => setActive(!isActive)} reduce={!!reduce} /> : <ViewerBadge />}
 
       <button
         type="button"
@@ -121,7 +133,7 @@ export function EditorTopBar() {
         <LayersIcon className="text-[14px]" /> Versions
       </button>
 
-      <FailureAlertButton />
+      {canEdit ? <FailureAlertButton /> : null}
 
       <button
         type="button"
@@ -132,27 +144,31 @@ export function EditorTopBar() {
         <HistoryIcon className="text-[14px]" /> Runs
       </button>
 
-      <button
-        type="button"
-        onClick={handleRun}
-        disabled={running}
-        className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink disabled:opacity-70"
-      >
-        {running ? <SpinnerIcon className="animate-spin text-[13px]" /> : <PlayIcon className="text-[11px]" />}
-        {running ? "Running" : "Run"}
-      </button>
+      {canEdit ? (
+        <>
+          <button
+            type="button"
+            onClick={handleRun}
+            disabled={running}
+            className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink disabled:opacity-70"
+          >
+            {running ? <SpinnerIcon className="animate-spin text-[13px]" /> : <PlayIcon className="text-[11px]" />}
+            {running ? "Running" : "Run"}
+          </button>
 
-      <button
-        type="button"
-        onClick={handleSave}
-        disabled={saving}
-        className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink disabled:opacity-70"
-      >
-        {saving ? <SpinnerIcon className="animate-spin text-[13px]" /> : <SaveIcon className="text-[13px]" />}
-        {saving ? "Saving" : "Save"}
-      </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink disabled:opacity-70"
+          >
+            {saving ? <SpinnerIcon className="animate-spin text-[13px]" /> : <SaveIcon className="text-[13px]" />}
+            {saving ? "Saving" : "Save"}
+          </button>
 
-      <PublishButton onPublish={handlePublish} />
+          <PublishButton onPublish={handlePublish} />
+        </>
+      ) : null}
     </header>
   );
 }
@@ -181,6 +197,23 @@ function PublishButton({ onPublish }: { onPublish: () => void }) {
       {publishing ? <SpinnerIcon className="animate-spin text-[14px]" /> : <UploadIcon className="text-[14px]" />}
       {publishing ? "Publishing" : "Publish"}
     </button>
+  );
+}
+
+/** Shown in place of the edit actions when the user only has read access. */
+function ViewerBadge() {
+  return (
+    <span
+      className="flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[12px] font-medium"
+      style={{
+        borderColor: "color-mix(in oklab, #8d8d99 35%, transparent)",
+        color: "var(--color-muted)",
+        background: "color-mix(in oklab, #8d8d99 8%, transparent)",
+      }}
+      title="You have read-only access to this workspace"
+    >
+      <GridIcon className="text-[13px]" /> Read-only
+    </span>
   );
 }
 

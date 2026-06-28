@@ -1,29 +1,105 @@
 import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "../store/auth";
-import { workflowApi, errorMessage } from "../lib/api";
-import type { WorkflowSummary } from "../lib/types";
+import { workflowApi, folderApi, tagApi, errorMessage } from "../lib/api";
+import type { Folder, SortDir, Tag, WorkflowSortBy, WorkflowSummary } from "../lib/types";
 import { navigate } from "../lib/router";
+import { canDeleteResources, canEdit } from "../lib/permissions";
 import { useToast } from "../components/ui/toast";
 import { confirm } from "../components/ui/confirm";
 import { CardSkeletonGrid, EmptyState as EmptyStateUI, ErrorState } from "../components/ui/states";
 import { Badge } from "../components/ui/Badge";
+import { Select, TextInput } from "../components/Field";
 import { timeAgo } from "../lib/format";
 import { TopNav } from "../components/TopNav";
-import { GridIcon, Logo, PlusIcon, SparkIcon, SpinnerIcon, TrashIcon } from "../components/icons";
+import { FolderRail } from "../components/FolderRail";
+import { WorkflowOrganizer } from "../components/WorkflowOrganizer";
+import {
+  FolderIcon,
+  GridIcon,
+  Logo,
+  PlusIcon,
+  SearchIcon,
+  SparkIcon,
+  SpinnerIcon,
+  TrashIcon,
+} from "../components/icons";
 import { categoryAccent } from "../editor/nodeCatalog";
 import { riseIn, stagger, still } from "../lib/motion";
+
+/** A single friendly dropdown that maps onto the server's (sortBy, sortDir) pair. */
+const SORT_OPTIONS = [
+  { value: "updated", label: "Recently updated", sortBy: "updatedAt" as WorkflowSortBy, sortDir: "desc" as SortDir },
+  { value: "created", label: "Recently created", sortBy: "createdAt" as WorkflowSortBy, sortDir: "desc" as SortDir },
+  { value: "name-asc", label: "Name (A–Z)", sortBy: "name" as WorkflowSortBy, sortDir: "asc" as SortDir },
+  { value: "name-desc", label: "Name (Z–A)", sortBy: "name" as WorkflowSortBy, sortDir: "desc" as SortDir },
+];
+type SortOption = (typeof SORT_OPTIONS)[number]["value"];
 
 export function DashboardPage() {
   const reduce = useReducedMotion();
   const toast = useToast();
   const workspace = useAuth((s) => s.workspace);
+  const mayEdit = canEdit(workspace?.role);
+  const mayDelete = canDeleteResources(workspace?.role);
 
   const [workflows, setWorkflows] = useState<WorkflowSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  // Bumped to force a refetch (used by the error-state retry).
+  // Bumped to force a refetch (used by the error-state retry and after mutations).
   const [reloadToken, setReloadToken] = useState(0);
+
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+
+  const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [sortOption, setSortOption] = useState<SortOption>("updated");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [tagId, setTagId] = useState<string | null>(null);
+  const [folderId, setFolderId] = useState<string | null>(null);
+
+  const [organizing, setOrganizing] = useState<WorkflowSummary | null>(null);
+
+  // Switching workspaces invalidates every filter — they reference that workspace's
+  // data. Reset during render (React's documented pattern for "adjust state when a
+  // prop/id changes") rather than an effect, so there's no extra render with stale filters.
+  const [filtersForWorkspace, setFiltersForWorkspace] = useState(workspace?.id);
+  if (workspace?.id !== filtersForWorkspace) {
+    setFiltersForWorkspace(workspace?.id);
+    setSearch("");
+    setDebouncedSearch("");
+    setSortOption("updated");
+    setStatusFilter("all");
+    setTagId(null);
+    setFolderId(null);
+  }
+
+  // Debounce search so it doesn't refetch on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Folders + tags power the rail and filter dropdown; reload after any mutation.
+  useEffect(() => {
+    if (!workspace) return;
+    let alive = true;
+    void (async () => {
+      try {
+        const [f, t] = await Promise.all([folderApi.list(workspace.id), tagApi.list(workspace.id)]);
+        if (alive) {
+          setFolders(f);
+          setTags(t);
+        }
+      } catch {
+        /* the workflow list's own error state covers the page; this is secondary chrome */
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [workspace, reloadToken]);
 
   useEffect(() => {
     if (!workspace) return;
@@ -31,8 +107,16 @@ export function DashboardPage() {
     void (async () => {
       setWorkflows(null);
       setError(null);
+      const sort = SORT_OPTIONS.find((o) => o.value === sortOption) ?? SORT_OPTIONS[0];
       try {
-        const list = await workflowApi.list(workspace.id);
+        const list = await workflowApi.list(workspace.id, {
+          search: debouncedSearch || undefined,
+          folderId: folderId ?? undefined,
+          tagId: tagId ?? undefined,
+          isActive: statusFilter === "all" ? undefined : statusFilter === "active",
+          sortBy: sort.sortBy,
+          sortDir: sort.sortDir,
+        });
         if (alive) setWorkflows(list);
       } catch (err) {
         if (alive) setError(errorMessage(err, "Could not load workflows"));
@@ -41,7 +125,9 @@ export function DashboardPage() {
     return () => {
       alive = false;
     };
-  }, [workspace, reloadToken]);
+  }, [workspace, reloadToken, debouncedSearch, sortOption, statusFilter, tagId, folderId]);
+
+  const reload = () => setReloadToken((t) => t + 1);
 
   const createWorkflow = async () => {
     if (!workspace || creating) return;
@@ -72,10 +158,45 @@ export function DashboardPage() {
       await workflowApi.remove(wf.id);
       setWorkflows((prev) => prev?.filter((w) => w.id !== wf.id) ?? null);
       toast.success("Workflow deleted");
+      reload();
     } catch (err) {
       toast.error(errorMessage(err, "Could not delete workflow"));
     }
   };
+
+  const createFolder = async (name: string) => {
+    if (!workspace) return;
+    try {
+      await folderApi.create(workspace.id, name);
+      toast.success(`Created "${name}"`);
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, "Could not create folder"));
+    }
+  };
+
+  const renameFolder = async (folder: Folder, name: string) => {
+    if (!workspace) return;
+    try {
+      await folderApi.rename(workspace.id, folder.id, name);
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, "Could not rename folder"));
+    }
+  };
+
+  const deleteFolder = async (folder: Folder) => {
+    if (!workspace) return;
+    try {
+      await folderApi.remove(workspace.id, folder.id);
+      toast.success(`Deleted "${folder.name}"`);
+      reload();
+    } catch (err) {
+      toast.error(errorMessage(err, "Could not delete folder"));
+    }
+  };
+
+  const filtersActive = debouncedSearch !== "" || statusFilter !== "all" || tagId !== null || folderId !== null;
 
   return (
     <div className="relative h-screen overflow-y-auto bg-base">
@@ -103,29 +224,102 @@ export function DashboardPage() {
               <SparkIcon className="text-[16px] text-accent-bright" />
               Templates
             </button>
-            <button
-              type="button"
-              onClick={createWorkflow}
-              disabled={creating || !workspace}
-              className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold text-white transition-all disabled:opacity-70"
-              style={{
-                background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
-                boxShadow: "0 12px 34px -12px color-mix(in oklab, var(--color-accent) 75%, transparent)",
-              }}
-            >
-              {creating ? <SpinnerIcon className="animate-spin text-[16px]" /> : <PlusIcon className="text-[16px]" />}
-              New workflow
-            </button>
+            {mayEdit ? (
+              <button
+                type="button"
+                onClick={createWorkflow}
+                disabled={creating || !workspace}
+                className="flex items-center gap-2 rounded-xl px-4 py-2.5 text-[13.5px] font-semibold text-white transition-all disabled:opacity-70"
+                style={{
+                  background: "linear-gradient(180deg, var(--color-accent-bright), var(--color-accent-deep))",
+                  boxShadow: "0 12px 34px -12px color-mix(in oklab, var(--color-accent) 75%, transparent)",
+                }}
+              >
+                {creating ? <SpinnerIcon className="animate-spin text-[16px]" /> : <PlusIcon className="text-[16px]" />}
+                New workflow
+              </button>
+            ) : null}
           </div>
         </motion.div>
 
-        <div className="mt-8">
+        <div className="mt-6 space-y-3">
+          <FolderRail
+            folders={folders}
+            activeFolderId={folderId}
+            onSelect={setFolderId}
+            canEdit={mayEdit}
+            onCreate={createFolder}
+            onRename={renameFolder}
+            onDelete={deleteFolder}
+          />
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[200px] flex-1">
+              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-faint" />
+              <TextInput
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search workflows…"
+                className="pl-9"
+                aria-label="Search workflows"
+              />
+            </div>
+            <Select
+              value={sortOption}
+              onChange={(e) => setSortOption(e.target.value as SortOption)}
+              className="w-auto"
+              aria-label="Sort by"
+            >
+              {SORT_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+            <Select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
+              className="w-auto"
+              aria-label="Filter by status"
+            >
+              <option value="all">All statuses</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </Select>
+            <Select
+              value={tagId ?? ""}
+              onChange={(e) => setTagId(e.target.value || null)}
+              className="w-auto capitalize"
+              aria-label="Filter by tag"
+            >
+              <option value="">All tags</option>
+              {tags.map((t) => (
+                <option key={t.id} value={t.id} className="capitalize">
+                  {t.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+
+        <div className="mt-6">
           {error ? (
-            <ErrorState title="Couldn’t load workflows" message={error} onRetry={() => setReloadToken((t) => t + 1)} />
+            <ErrorState title="Couldn’t load workflows" message={error} onRetry={reload} />
           ) : workflows === null ? (
             <CardSkeletonGrid count={6} />
           ) : workflows.length === 0 ? (
-            <EmptyWorkflows onCreate={createWorkflow} creating={creating} />
+            filtersActive ? (
+              <NoMatches
+                onClear={() => {
+                  setSearch("");
+                  setStatusFilter("all");
+                  setTagId(null);
+                  setFolderId(null);
+                }}
+              />
+            ) : (
+              <EmptyWorkflows onCreate={createWorkflow} creating={creating} />
+            )
           ) : (
             <motion.div
               variants={reduce ? still : stagger(0.04, 0.05)}
@@ -138,14 +332,25 @@ export function DashboardPage() {
                   key={wf.id}
                   wf={wf}
                   reduce={!!reduce}
+                  canDelete={mayDelete}
+                  canOrganize={mayEdit}
                   onOpen={() => navigate(`/workflows/${wf.id}`)}
                   onDelete={() => requestDelete(wf)}
+                  onOrganize={() => setOrganizing(wf)}
                 />
               ))}
             </motion.div>
           )}
         </div>
       </main>
+
+      <WorkflowOrganizer
+        workflow={organizing}
+        folders={folders}
+        knownTags={tags}
+        onClose={() => setOrganizing(null)}
+        onSaved={() => reload()}
+      />
     </div>
   );
 }
@@ -153,17 +358,25 @@ export function DashboardPage() {
 function WorkflowCard({
   wf,
   reduce,
+  canDelete,
+  canOrganize,
   onOpen,
   onDelete,
+  onOrganize,
 }: {
   wf: WorkflowSummary;
   reduce: boolean;
+  canDelete: boolean;
+  canOrganize: boolean;
   onOpen: () => void;
   onDelete: () => void;
+  onOrganize: () => void;
 }) {
   // A deterministic accent per card from its id keeps the grid colorful-but-restrained.
   const accents = ["#8b7bff", "#4c9bff", "#c26bff", "#34d0a8", "#e0a33e"];
   const accent = accents[hash(wf.id) % accents.length] ?? categoryAccent("action.http");
+  const visibleTags = wf.tags.slice(0, 3);
+  const extraTags = wf.tags.length - visibleTags.length;
 
   return (
     <motion.div
@@ -192,17 +405,34 @@ function WorkflowCard({
         >
           <GridIcon />
         </div>
-        <button
-          type="button"
-          aria-label="Delete workflow"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          className="rounded-lg p-1.5 text-faint opacity-0 transition-all hover:bg-red-500/10 hover:text-red-300 group-hover:opacity-100"
-        >
-          <TrashIcon className="text-[16px]" />
-        </button>
+        <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          {canOrganize ? (
+            <button
+              type="button"
+              aria-label="Organize workflow"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOrganize();
+              }}
+              className="rounded-lg p-1.5 text-faint transition-all hover:bg-white/5 hover:text-ink"
+            >
+              <FolderIcon className="text-[16px]" />
+            </button>
+          ) : null}
+          {canDelete ? (
+            <button
+              type="button"
+              aria-label="Delete workflow"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className="rounded-lg p-1.5 text-faint transition-all hover:bg-red-500/10 hover:text-red-300"
+            >
+              <TrashIcon className="text-[16px]" />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <h3 className="relative mt-4 truncate text-[15px] font-semibold text-ink">{wf.name}</h3>
@@ -212,7 +442,24 @@ function WorkflowCard({
         <p className="relative mt-1 text-[13px] text-faint">No description yet</p>
       )}
 
-      <div className="relative mt-5 flex items-center justify-between">
+      {wf.folder || wf.tags.length > 0 ? (
+        <div className="relative mt-3 flex flex-wrap items-center gap-1.5">
+          {wf.folder ? (
+            <span className="flex items-center gap-1 rounded-full bg-white/[0.05] px-2 py-0.5 text-[10.5px] text-faint">
+              <FolderIcon className="text-[10px]" />
+              {wf.folder.name}
+            </span>
+          ) : null}
+          {visibleTags.map((t) => (
+            <span key={t.id} className="rounded-full bg-white/[0.05] px-2 py-0.5 text-[10.5px] capitalize text-faint">
+              {t.name}
+            </span>
+          ))}
+          {extraTags > 0 ? <span className="text-[10.5px] text-faint">+{extraTags}</span> : null}
+        </div>
+      ) : null}
+
+      <div className="relative mt-4 flex items-center justify-between">
         <StatusPill active={wf.isActive} />
         <span className="text-[12px] text-faint">Edited {timeAgo(wf.updatedAt)}</span>
       </div>
@@ -225,6 +472,25 @@ function StatusPill({ active }: { active: boolean }) {
     <Badge color={active ? "#34d0a8" : "#6b6b78"} glow={active}>
       {active ? "Active" : "Inactive"}
     </Badge>
+  );
+}
+
+function NoMatches({ onClear }: { onClear: () => void }) {
+  return (
+    <EmptyStateUI
+      icon={<SearchIcon />}
+      title="No workflows match"
+      description="Try a different search, or clear the active filters."
+      action={
+        <button
+          type="button"
+          onClick={onClear}
+          className="flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-[13.5px] font-semibold text-ink transition-colors hover:bg-white/5"
+        >
+          Clear filters
+        </button>
+      }
+    />
   );
 }
 

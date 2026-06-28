@@ -1,10 +1,22 @@
-import type { ExecutionStatus, RunLogEntry } from "./types";
+import type { AppNotification, ExecutionStatus, RunLogEntry } from "./types";
 
 // Mirror of the server's realtime event contract (server/src/realtime/events.ts).
 export const RUN_EVENT = "run:event";
 export const RUN_LOG = "run:log";
 export const RUN_SUBSCRIBE = "run:subscribe";
 export const RUN_UNSUBSCRIBE = "run:unsubscribe";
+
+// Per-user notification channel (server/src/realtime/notifications.ts).
+export const NOTIFICATION_NEW = "notification:new";
+export const NOTIFICATION_UNREAD = "notification:unread";
+
+/** Server -> client: a freshly created notification. */
+export type NotificationNewPayload = AppNotification;
+
+/** Server -> client: the user's unread count changed. */
+export interface NotificationUnreadPayload {
+  count: number;
+}
 
 /** A single live run lifecycle event pushed by the worker over Socket.IO. */
 export type RunLiveEvent =

@@ -80,6 +80,11 @@ export const env = {
     httpMs: int("NODE_HTTP_TIMEOUT_MS", 30_000),
     aiMs: int("NODE_AI_TIMEOUT_MS", 60_000),
   },
+  // Composition: how deep the `flow.subworkflow` (Call Workflow) call chain may
+  // nest before the engine rejects further calls. Cycles are detected separately.
+  subworkflow: {
+    maxDepth: int("SUBWORKFLOW_MAX_DEPTH", 5),
+  },
   // Rate limiting for abuse-prone surfaces (auth + public webhooks). Disabled
   // under test so route tests aren't throttled; the limiter is unit-tested
   // directly. Toggle/limits are env-overridable for ops tuning.
@@ -89,6 +94,9 @@ export const env = {
     authMax: int("AUTH_RATE_LIMIT_MAX", 50),
     webhookWindowMs: int("WEBHOOK_RATE_LIMIT_WINDOW_MS", 60_000),
     webhookMax: int("WEBHOOK_RATE_LIMIT_MAX", 120),
+    // Public `/api/v1` surface, throttled per API key (not per IP).
+    publicApiWindowMs: int("PUBLIC_API_RATE_LIMIT_WINDOW_MS", 60_000),
+    publicApiMax: int("PUBLIC_API_RATE_LIMIT_MAX", 120),
   },
   // Structured logging. Silent under test to keep output clean; pretty-ish JSON
   // otherwise. Correlation ids (request id / run id) are attached per log.

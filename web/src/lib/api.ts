@@ -1,15 +1,25 @@
 import axios, { AxiosError } from "axios";
 import type {
   AnalyticsResult,
+  ApiKey,
+  ApiScope,
+  AppNotification,
+  AuditLogFilters,
+  AuditLogPage,
   AuthResponse,
+  CreatedApiKey,
   Credential,
+  NotificationsPage,
   CredentialTypeSpec,
   FailureNotifyConfig,
+  Folder,
+  ListWorkflowsParams,
   NodeTestResult,
   PublishResponse,
   RunFilters,
   RunLogEntry,
   RunSummary,
+  Tag,
   TemplateSummary,
   UpdateWorkflowResponse,
   Workflow,
@@ -20,6 +30,13 @@ import type {
   WorkflowVersionSummary,
   WorkspaceRunsPage,
   Workspace,
+  WorkspaceRole,
+  WorkspaceMember,
+  WorkspaceMembers,
+  WorkspaceVariable,
+  WorkspaceSecret,
+  PendingInvite,
+  MyInvite,
 } from "./types";
 
 const TOKEN_KEY = "fluxion.token";
@@ -88,17 +105,73 @@ export const authApi = {
   },
 };
 
+export const workspaceApi = {
+  async create(name: string): Promise<Workspace> {
+    const { data } = await api.post<Workspace>("/workspaces", { name });
+    return data;
+  },
+  async remove(workspaceId: string): Promise<void> {
+    await api.delete(`/workspaces/${workspaceId}`);
+  },
+  /** Members + pending invites for the management screen. */
+  async members(workspaceId: string): Promise<WorkspaceMembers> {
+    const { data } = await api.get<WorkspaceMembers>(`/workspaces/${workspaceId}/members`);
+    return data;
+  },
+  async invite(workspaceId: string, email: string, role: WorkspaceRole): Promise<PendingInvite> {
+    const { data } = await api.post<PendingInvite>(`/workspaces/${workspaceId}/invites`, { email, role });
+    return data;
+  },
+  async resendInvite(workspaceId: string, inviteId: string): Promise<PendingInvite> {
+    const { data } = await api.post<PendingInvite>(`/workspaces/${workspaceId}/invites/${inviteId}/resend`);
+    return data;
+  },
+  async revokeInvite(workspaceId: string, inviteId: string): Promise<void> {
+    await api.delete(`/workspaces/${workspaceId}/invites/${inviteId}`);
+  },
+  async setRole(workspaceId: string, userId: string, role: WorkspaceRole): Promise<WorkspaceMember> {
+    const { data } = await api.patch<WorkspaceMember>(`/workspaces/${workspaceId}/members/${userId}`, { role });
+    return data;
+  },
+  async removeMember(workspaceId: string, userId: string): Promise<void> {
+    await api.delete(`/workspaces/${workspaceId}/members/${userId}`);
+  },
+};
+
+export const inviteApi = {
+  /** The current user's pending invites. */
+  async mine(): Promise<MyInvite[]> {
+    const { data } = await api.get<MyInvite[]>("/invites");
+    return data;
+  },
+  /** Accept an invite; resolves with the workspace the user just joined. */
+  async accept(inviteId: string): Promise<Workspace> {
+    const { data } = await api.post<Workspace>(`/invites/${inviteId}/accept`);
+    return data;
+  },
+  async decline(inviteId: string): Promise<void> {
+    await api.post(`/invites/${inviteId}/decline`);
+  },
+};
+
 export const workflowApi = {
-  async list(workspaceId: string): Promise<WorkflowSummary[]> {
-    const { data } = await api.get<WorkflowSummary[]>("/workflows", { params: { workspaceId } });
+  /** Lists a workspace's workflows; the server does all search/filter/sort. */
+  async list(workspaceId: string, params: ListWorkflowsParams = {}): Promise<WorkflowSummary[]> {
+    const { data } = await api.get<WorkflowSummary[]>("/workflows", {
+      params: { workspaceId, ...params, isActive: params.isActive === undefined ? undefined : String(params.isActive) },
+    });
     return data;
   },
   async get(id: string): Promise<Workflow> {
     const { data } = await api.get<Workflow>(`/workflows/${id}`);
     return data;
   },
-  async create(workspaceId: string, name: string, description?: string): Promise<Workflow> {
-    const { data } = await api.post<Workflow>("/workflows", { workspaceId, name, description });
+  async create(
+    workspaceId: string,
+    name: string,
+    options: { description?: string; folderId?: string; tags?: string[] } = {},
+  ): Promise<Workflow> {
+    const { data } = await api.post<Workflow>("/workflows", { workspaceId, name, ...options });
     return data;
   },
   async update(
@@ -109,6 +182,10 @@ export const workflowApi = {
       isActive?: boolean;
       definition?: WorkflowDefinition;
       failureNotify?: FailureNotifyConfig | null;
+      /** Move into a folder, or `null` to un-file it. */
+      folderId?: string | null;
+      /** Replaces the full tag set. */
+      tags?: string[];
     },
   ): Promise<UpdateWorkflowResponse> {
     const { data } = await api.put<UpdateWorkflowResponse>(`/workflows/${id}`, patch);
@@ -152,6 +229,32 @@ export const workflowApi = {
   },
 };
 
+export const folderApi = {
+  async list(workspaceId: string): Promise<Folder[]> {
+    const { data } = await api.get<Folder[]>(`/workspaces/${workspaceId}/folders`);
+    return data;
+  },
+  async create(workspaceId: string, name: string): Promise<Folder> {
+    const { data } = await api.post<Folder>(`/workspaces/${workspaceId}/folders`, { name });
+    return data;
+  },
+  async rename(workspaceId: string, folderId: string, name: string): Promise<Folder> {
+    const { data } = await api.patch<Folder>(`/workspaces/${workspaceId}/folders/${folderId}`, { name });
+    return data;
+  },
+  async remove(workspaceId: string, folderId: string): Promise<void> {
+    await api.delete(`/workspaces/${workspaceId}/folders/${folderId}`);
+  },
+};
+
+export const tagApi = {
+  /** Every tag in the workspace, for filter/autocomplete UI. */
+  async list(workspaceId: string): Promise<Tag[]> {
+    const { data } = await api.get<Tag[]>(`/workspaces/${workspaceId}/tags`);
+    return data;
+  },
+};
+
 export const templateApi = {
   /** The prebuilt template gallery (static, server-defined). */
   async list(): Promise<TemplateSummary[]> {
@@ -185,6 +288,44 @@ export const credentialApi = {
   },
   async remove(id: string): Promise<void> {
     await api.delete(`/credentials/${id}`);
+  },
+};
+
+export const variableApi = {
+  async list(workspaceId: string): Promise<WorkspaceVariable[]> {
+    const { data } = await api.get<WorkspaceVariable[]>("/variables", { params: { workspaceId } });
+    return data;
+  },
+  async create(workspaceId: string, input: { key: string; value: string }): Promise<WorkspaceVariable> {
+    const { data } = await api.post<WorkspaceVariable>("/variables", { workspaceId, ...input });
+    return data;
+  },
+  async update(id: string, patch: { key?: string; value?: string }): Promise<WorkspaceVariable> {
+    const { data } = await api.put<WorkspaceVariable>(`/variables/${id}`, patch);
+    return data;
+  },
+  async remove(id: string): Promise<void> {
+    await api.delete(`/variables/${id}`);
+  },
+};
+
+export const secretApi = {
+  /** Secrets list by key only — their values never leave the server. */
+  async list(workspaceId: string): Promise<WorkspaceSecret[]> {
+    const { data } = await api.get<WorkspaceSecret[]>("/secrets", { params: { workspaceId } });
+    return data;
+  },
+  async create(workspaceId: string, input: { key: string; value: string }): Promise<WorkspaceSecret> {
+    const { data } = await api.post<WorkspaceSecret>("/secrets", { workspaceId, ...input });
+    return data;
+  },
+  /** Omit `value` to rename only; supply it to rotate the secret. */
+  async update(id: string, patch: { key?: string; value?: string }): Promise<WorkspaceSecret> {
+    const { data } = await api.put<WorkspaceSecret>(`/secrets/${id}`, patch);
+    return data;
+  },
+  async remove(id: string): Promise<void> {
+    await api.delete(`/secrets/${id}`);
   },
 };
 
@@ -225,6 +366,55 @@ export const runApi = {
 export const analyticsApi = {
   async get(workspaceId: string, range: { from?: string; to?: string } = {}): Promise<AnalyticsResult> {
     const { data } = await api.get<AnalyticsResult>("/analytics", { params: { workspaceId, ...range } });
+    return data;
+  },
+};
+
+export const notificationApi = {
+  /** A page of the current user's notifications (newest first). */
+  async list(params: { unread?: boolean; cursor?: string; limit?: number } = {}): Promise<NotificationsPage> {
+    const { data } = await api.get<NotificationsPage>("/notifications", {
+      params: { unread: params.unread ? "true" : undefined, cursor: params.cursor, limit: params.limit },
+    });
+    return data;
+  },
+  async unreadCount(): Promise<number> {
+    const { data } = await api.get<{ count: number }>("/notifications/unread-count");
+    return data.count;
+  },
+  async markRead(id: string): Promise<AppNotification> {
+    const { data } = await api.post<AppNotification>(`/notifications/${id}/read`);
+    return data;
+  },
+  async markAllRead(): Promise<number> {
+    const { data } = await api.post<{ count: number }>("/notifications/read-all");
+    return data.count;
+  },
+};
+
+export const apiKeyApi = {
+  /** Active API keys for a workspace (admin-only). */
+  async list(workspaceId: string): Promise<ApiKey[]> {
+    const { data } = await api.get<ApiKey[]>(`/workspaces/${workspaceId}/api-keys`);
+    return data;
+  },
+  /** Create a key; the response's `key` is the plaintext, shown only this once. */
+  async create(workspaceId: string, input: { name: string; scopes: ApiScope[] }): Promise<CreatedApiKey> {
+    const { data } = await api.post<CreatedApiKey>(`/workspaces/${workspaceId}/api-keys`, input);
+    return data;
+  },
+  async revoke(workspaceId: string, keyId: string): Promise<void> {
+    await api.delete(`/workspaces/${workspaceId}/api-keys/${keyId}`);
+  },
+};
+
+export const auditApi = {
+  /** A page of a workspace's audit log (admin/owner only). */
+  async list(
+    workspaceId: string,
+    filters: AuditLogFilters & { cursor?: string; limit?: number } = {},
+  ): Promise<AuditLogPage> {
+    const { data } = await api.get<AuditLogPage>(`/workspaces/${workspaceId}/audit-log`, { params: filters });
     return data;
   },
 };

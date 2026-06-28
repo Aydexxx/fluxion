@@ -7,12 +7,16 @@ import { PrismaRunRecorder } from "./engine/prismaRecorder";
 import { nodemailerSender } from "./engine/clients/email";
 import { pgQueryRunner } from "./engine/clients/db";
 import { createPrismaCredentialAccessor } from "./services/credentials";
+import { createPrismaVariableResolver } from "./services/variables";
 import { createRedisConnection } from "./queue/connection";
 import { WORKFLOW_RUNS_QUEUE, type WorkflowRunJobData } from "./queue/workflowQueue";
 import { WORKFLOW_SCHEDULES_QUEUE, type ScheduleJobData } from "./queue/scheduleQueue";
 import { createRunEventEmitter } from "./realtime/emitter";
+import { createNotificationEmitter } from "./realtime/notificationEmitter";
+import { setNotificationPublisher } from "./realtime/notifications";
 import { handleJobFailure, runJob, type ProcessRunDeps } from "./worker/processRun";
 import { dispatchFailureNotification } from "./worker/failureNotifier";
+import { recordRunFailure } from "./services/runEvents";
 import { enqueueRunForWorkflow } from "./services/runs";
 import { prisma } from "./services/prisma";
 
@@ -23,6 +27,10 @@ import { prisma } from "./services/prisma";
  */
 const connection = createRedisConnection();
 const { sink: onEvent, logSink: onLog, close: closeEmitter } = createRunEventEmitter();
+// Run-failure notifications are created on the worker; wire them to the user
+// channel so an owner sees their failed run light up the bell in real time.
+const { publisher: notificationPublisher, close: closeNotificationEmitter } = createNotificationEmitter();
+setNotificationPublisher(notificationPublisher);
 const recorder = new PrismaRunRecorder(prisma);
 
 const deps: ProcessRunDeps = {
@@ -35,18 +43,42 @@ const deps: ProcessRunDeps = {
     const published = (workflow.publishedDefinition as unknown as WorkflowDefinition | null) ?? { nodes: [], edges: [] };
     return { definition: published, workspaceId: workflow.workspaceId };
   },
+  // Resolves a sub-workflow target's *published* definition for the Call Workflow
+  // node — the published-version rule. Same-workspace enforcement happens in the runner.
+  loadPublishedWorkflow: async (workflowId) => {
+    const workflow = await prisma.workflow.findUnique({
+      where: { id: workflowId },
+      select: { id: true, workspaceId: true, publishedDefinition: true },
+    });
+    if (!workflow || workflow.publishedDefinition == null) return null;
+    return {
+      workflowId: workflow.id,
+      workspaceId: workflow.workspaceId,
+      definition: workflow.publishedDefinition as unknown as WorkflowDefinition,
+    };
+  },
   registry: createDefaultRegistry(),
   llm: env.llm,
   // Secrets are resolved + decrypted here, per run, scoped to the run's workspace.
   credentialsFor: createPrismaCredentialAccessor,
+  // Workspace variables/secrets are likewise resolved + decrypted on the worker.
+  variablesFor: createPrismaVariableResolver,
   email: nodemailerSender,
   db: pgQueryRunner,
   limits: { httpTimeoutMs: env.nodeTimeouts.httpMs, aiTimeoutMs: env.nodeTimeouts.aiMs },
+  maxSubworkflowDepth: env.subworkflow.maxDepth,
   onEvent,
   onLog,
-  // On dead-letter, alert the workflow's configured channel (best-effort).
-  onTerminalFailure: (runId) =>
-    dispatchFailureNotification(runId, { prisma, credentialsFor: createPrismaCredentialAccessor, email: nodemailerSender }),
+  // On dead-letter: record the failure for the audit log + notify the run's
+  // owner, then alert the workflow's configured channel (all best-effort).
+  onTerminalFailure: async (runId) => {
+    await recordRunFailure(runId);
+    await dispatchFailureNotification(runId, {
+      prisma,
+      credentialsFor: createPrismaCredentialAccessor,
+      email: nodemailerSender,
+    });
+  },
 };
 
 const worker = new Worker<WorkflowRunJobData>(
@@ -113,6 +145,7 @@ async function shutdown(): Promise<void> {
   await worker.close();
   await scheduleWorker.close();
   await closeEmitter();
+  await closeNotificationEmitter();
   await connection.quit();
   process.exit(0);
 }

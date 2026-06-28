@@ -12,7 +12,7 @@ import { navigate } from "../lib/router";
 import { toast } from "../store/toasts";
 
 const STATUSES: (ExecutionStatus | "all")[] = ["all", "queued", "running", "success", "failed"];
-const TRIGGERS: (RunTriggerType | "all")[] = ["all", "manual", "webhook", "schedule"];
+const TRIGGERS: (RunTriggerType | "all")[] = ["all", "manual", "webhook", "schedule", "api"];
 const RANGES = [
   { key: "1", label: "24h", days: 1 },
   { key: "7", label: "7 days", days: 7 },

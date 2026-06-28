@@ -15,13 +15,21 @@ datasource db {
 enum WorkspaceRole {
   owner
   admin
-  member
+  editor
+  viewer
+}
+
+enum InviteStatus {
+  pending
+  accepted
+  declined
 }
 
 enum RunTrigger {
   manual
   webhook
   schedule
+  api
 }
 
 enum ExecutionStatus {
@@ -40,6 +48,7 @@ model User {
 
   ownedWorkspaces Workspace[]
   memberships     WorkspaceMember[]
+  notifications   Notification[]
 }
 
 /// Multi-tenant container; everything else (workflows, credentials) is scoped to a workspace.
@@ -50,17 +59,47 @@ model Workspace {
 
   owner       User              @relation(fields: [ownerId], references: [id])
   members     WorkspaceMember[]
+  invites     Invite[]
   workflows   Workflow[]
   credentials Credential[]
+  auditLogs   AuditLog[]
+  folders     Folder[]
+  tags        Tag[]
+  variables   WorkspaceVariable[]
+  secrets     WorkspaceSecret[]
+  apiKeys     ApiKey[]
 
   @@index([ownerId])
+}
+
+/// A pending/answered invitation to join a workspace, keyed by email so it works
+/// whether or not the invitee has an account yet. An existing user sees it under
+/// their pending invites and accepts; a new user's invites resolve once they sign
+/// up with the matching email. One active invite per (workspace, email).
+model Invite {
+  id            String       @id @default(cuid())
+  workspaceId   String
+  /// Normalized (lowercased) invitee email — the join key for account-less invites.
+  email         String
+  role          WorkspaceRole @default(viewer)
+  status        InviteStatus  @default(pending)
+  /// Denormalized inviter name, so the invitee's list needs no extra joins.
+  invitedByName String?
+  createdAt     DateTime     @default(now())
+  respondedAt   DateTime?
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, email])
+  @@index([email])
+  @@index([workspaceId])
 }
 
 /// RBAC join table between User and Workspace.
 model WorkspaceMember {
   userId      String
   workspaceId String
-  role        WorkspaceRole @default(member)
+  role        WorkspaceRole @default(viewer)
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -83,14 +122,63 @@ model Workflow {
   publishedDefinition Json?
   /// Optional failure-alert config: `{ channel, credentialId, to? }`. Null = no alerts.
   failureNotify Json?
+  /// Optional folder this workflow is filed under, for organization at scale. Null = unfiled.
+  folderId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  folder    Folder?           @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  tags      WorkflowTag[]
   runs      WorkflowRun[]
   versions  WorkflowVersion[]
 
   @@index([workspaceId])
+  @@index([folderId])
+}
+
+/// A flat (non-nested) grouping of workflows within a workspace, for organizing
+/// a growing list. Deleting a folder un-files its workflows rather than deleting
+/// them (see Workflow.folder's onDelete: SetNull).
+model Folder {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workflows Workflow[]
+
+  @@index([workspaceId])
+}
+
+/// A reusable, workspace-scoped label. Names are normalized (trimmed +
+/// lowercased) at write time so "Marketing" and "marketing" collapse into one
+/// tag instead of fragmenting the filter list.
+model Tag {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workflows WorkflowTag[]
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+/// Join table for the Workflow <-> Tag many-to-many.
+model WorkflowTag {
+  workflowId String
+  tagId      String
+
+  workflow Workflow @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  tag      Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([workflowId, tagId])
+  @@index([tagId])
 }
 
 /// An immutable snapshot taken every time a workflow is published (or rolled back).
@@ -133,16 +221,27 @@ model WorkflowRun {
   definition Json?
   /// When this run is a replay, the run it was replayed from (kept for lineage).
   replayOfId String?
+  /// The user who triggered this run (manual/replay). Null for webhook/schedule
+  /// triggers with no human actor — used to notify a run's owner when it fails.
+  triggeredById String?
+  /// When this run is a nested sub-workflow invocation, the parent run that called it.
+  /// Null for top-level runs. Cascades so deleting a parent run removes its nested runs.
+  parentRunId String?
+  /// The `flow.subworkflow` node in the parent definition that spawned this run (timeline linkage).
+  parentNodeId String?
 
   workflow       Workflow        @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   nodeExecutions NodeExecution[]
   logs           RunLog[]
   replayOf       WorkflowRun?    @relation("RunReplays", fields: [replayOfId], references: [id], onDelete: SetNull)
   replays        WorkflowRun[]   @relation("RunReplays")
+  parentRun      WorkflowRun?    @relation("NestedRuns", fields: [parentRunId], references: [id], onDelete: Cascade)
+  nestedRuns     WorkflowRun[]   @relation("NestedRuns")
 
   @@index([workflowId])
   @@index([createdAt])
   @@index([replayOfId])
+  @@index([parentRunId])
   // Keyset pagination on the workspace runs list orders by (createdAt, id) desc.
   @@index([createdAt, id])
 }
@@ -197,5 +296,126 @@ model Credential {
 
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  @@index([workspaceId])
+}
+
+/// An append-only record of a noteworthy workspace event (who did what to what,
+/// when). Read-only by design — never updated or deleted except via workspace
+/// cascade. The actor + target are denormalized (name alongside id) so the audit
+/// view renders with no extra joins and survives the actor/target being removed.
+model AuditLog {
+  id          String   @id @default(cuid())
+  workspaceId String
+  /// The user who performed the action. Null for system-originated events.
+  actorId     String?
+  /// Denormalized actor name at event time (e.g. "Ada"), or "System".
+  actorName   String?
+  /// Stable event key, e.g. "member.invited", "workflow.published", "run.failed".
+  action      String
+  /// What the action concerned: "member" | "workflow" | "credential" | "run" | "invite" | "workspace".
+  targetType  String?
+  targetId    String?
+  /// Denormalized human label for the target (email, workflow name, …).
+  targetName  String?
+  /// Extra structured context, e.g. `{ from: "viewer", to: "editor" }` for a role change.
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  // The audit view paginates by (createdAt, id) desc and filters by actor/action.
+  @@index([workspaceId, createdAt])
+  @@index([workspaceId, actorId])
+  @@index([workspaceId, action])
+}
+
+/// A persisted in-app notification addressed to a single user. Survives reload
+/// (unlike ephemeral presence) and is also pushed live over the user's Socket.IO
+/// channel. `data` carries deep-link context (workspace/run id) for the UI.
+model Notification {
+  id          String   @id @default(cuid())
+  userId      String
+  /// Event key: "workspace.invited" | "run.failed" | "role.changed" | "mention".
+  type        String
+  title       String
+  body        String?
+  /// Workspace this notification relates to, when applicable (for deep-linking).
+  workspaceId String?
+  /// Extra structured context (e.g. `{ runId, workflowId }`), for navigation.
+  data        Json?
+  read        Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // The bell lists newest-first and counts unread per user.
+  @@index([userId, createdAt])
+  @@index([userId, read])
+}
+
+/// A scoped, revocable API key granting programmatic access to a single workspace
+/// through the public `/api/v1` surface. Only the SHA-256 hash of the secret is
+/// stored — the plaintext is shown exactly once, at creation. `prefix` is a
+/// non-secret leading slice kept for display/identification in the management UI.
+model ApiKey {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  name          String
+  /// SHA-256 (hex) of the full key. Looked up on every authenticated API request.
+  hashedKey     String   @unique
+  /// Non-secret leading slice of the key (e.g. "flux_AbC123"), safe to display.
+  prefix        String
+  /// Capability scopes (e.g. "workflows:read", "workflows:run") — the key's RBAC.
+  scopes        String[]
+  /// Last time the key authenticated a request (throttled writes); null until first use.
+  lastUsedAt    DateTime?
+  /// Who created it (id + denormalized name), for the management list.
+  createdById   String?
+  createdByName String?
+  /// Soft-revocation timestamp; a revoked key never authenticates again. Null = active.
+  revokedAt     DateTime?
+  createdAt     DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId])
+  @@index([hashedKey])
+}
+
+/// A reusable, workspace-scoped plain-text value referenced in node configs via
+/// `{{ vars.KEY }}`. Unlike a secret, the value is non-sensitive and is returned
+/// to the client as-is (e.g. a base URL, an account id, a feature flag).
+model WorkspaceVariable {
+  id          String   @id @default(cuid())
+  workspaceId String
+  /// Reference key (identifier-shaped: letters, digits, underscore). Unique per workspace.
+  key         String
+  value       String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
+  @@index([workspaceId])
+}
+
+/// A reusable, workspace-scoped secret referenced in node configs via
+/// `{{ secrets.KEY }}`. The value is encrypted at rest (AES-256-GCM, same packed
+/// format and master key as credentials) and is NEVER returned to the client —
+/// only its key is exposed. Decrypted solely at execution time (worker / node test).
+model WorkspaceSecret {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  /// Reference key (identifier-shaped). Unique per workspace.
+  key            String
+  /// AES-256-GCM packed ciphertext (`v1:iv:tag:ciphertext`). Never leaves the server in plaintext.
+  encryptedValue String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
   @@index([workspaceId])
 }

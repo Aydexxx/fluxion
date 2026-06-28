@@ -82,6 +82,9 @@ export async function instantiateTemplate(
     isActive: workflow.isActive,
     createdAt: workflow.createdAt.toISOString(),
     updatedAt: workflow.updatedAt.toISOString(),
+    // A freshly instantiated template starts unfiled and untagged.
+    folder: null,
+    tags: [],
     definition: workflow.draftDefinition as unknown as WorkflowDefinition,
     publishedDefinition: null,
     hasUnpublishedChanges: template.definition.nodes.length > 0,

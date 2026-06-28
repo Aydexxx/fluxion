@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { runApi, errorMessage } from "../lib/api";
-import type { NodeExecution, RunLogEntry, RunLogLevel, WorkflowRun } from "../lib/types";
+import type { NestedRunRef, NodeExecution, RunLogEntry, RunLogLevel, WorkflowRun } from "../lib/types";
 import { subscribeRunStream } from "../lib/runStream";
 import { buildTimeline, type TimelineBar } from "../editor/timeline";
 import { statusVisual } from "../editor/runStatus";
@@ -91,6 +91,14 @@ export function RunDetailPage({ runId }: { runId: string }) {
     [run, selectedNodeId],
   );
 
+  const childRuns = useMemo(() => run?.childRuns ?? [], [run]);
+  // Nested runs keyed by the Call Workflow node that spawned them, for inline links.
+  const childByNode = useMemo(() => {
+    const map = new Map<string, NestedRunRef>();
+    for (const c of childRuns) if (c.parentNodeId) map.set(c.parentNodeId, c);
+    return map;
+  }, [childRuns]);
+
   return (
     <div className="relative h-screen overflow-y-auto bg-base">
       <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 h-[360px] bloom opacity-70" />
@@ -122,10 +130,12 @@ export function RunDetailPage({ runId }: { runId: string }) {
                   live={live}
                   selectedNodeId={selectedNodeId}
                   onSelect={setSelectedNodeId}
+                  childByNode={childByNode}
                 />
+                {childRuns.length > 0 ? <NestedRunsPanel childRuns={childRuns} /> : null}
                 <LogsPanel logs={logs} live={live} />
               </div>
-              <NodeInspector exec={selectedExec} nodeId={selectedNodeId} />
+              <NodeInspector exec={selectedExec} nodeId={selectedNodeId} child={selectedNodeId ? childByNode.get(selectedNodeId) ?? null : null} />
             </div>
           </>
         )}
@@ -151,6 +161,16 @@ function RunHeader({ run, live, onReplayed }: { run: WorkflowRun; live: boolean;
             title={run.replayOfId}
           >
             ↳ replay of {run.replayOfId.slice(0, 8)}…
+          </button>
+        ) : null}
+        {run.parentRun ? (
+          <button
+            type="button"
+            onClick={() => navigate(`/runs/${run.parentRun!.id}`)}
+            className="rounded-md bg-white/6 px-2 py-0.5 text-[11px] text-muted transition-colors hover:text-ink"
+            title={`Nested run of ${run.parentRun.workflowName}`}
+          >
+            ↳ nested in {run.parentRun.workflowName}
           </button>
         ) : null}
         <div className="ml-auto">
@@ -185,11 +205,13 @@ function ExecutionTimeline({
   live,
   selectedNodeId,
   onSelect,
+  childByNode,
 }: {
   run: WorkflowRun;
   live: boolean;
   selectedNodeId: string | null;
   onSelect: (id: string) => void;
+  childByNode: Map<string, NestedRunRef>;
 }) {
   // Recompute against a ticking clock while live, so in-progress bars grow.
   const [, force] = useState(0);
@@ -219,6 +241,7 @@ function ExecutionTimeline({
               totalMs={timeline.totalMs}
               selected={bar.nodeId === selectedNodeId}
               onSelect={() => onSelect(bar.nodeId)}
+              nested={childByNode.has(bar.nodeId)}
             />
           ))}
         </div>
@@ -232,11 +255,13 @@ function TimelineRow({
   totalMs,
   selected,
   onSelect,
+  nested,
 }: {
   bar: TimelineBar;
   totalMs: number;
   selected: boolean;
   onSelect: () => void;
+  nested?: boolean;
 }) {
   const color = statusVisual(bar.status).color;
   const leftPct = (bar.offsetMs / totalMs) * 100;
@@ -250,8 +275,9 @@ function TimelineRow({
       className="group grid w-full grid-cols-[120px_1fr] items-center gap-3 rounded-lg px-1.5 py-1 text-left transition-colors hover:bg-white/4"
       style={{ background: selected ? "color-mix(in oklab, white 6%, transparent)" : undefined }}
     >
-      <span className="truncate font-mono text-[11.5px] text-muted group-hover:text-ink" title={bar.nodeId}>
-        {bar.nodeId}
+      <span className="flex items-center gap-1 truncate font-mono text-[11.5px] text-muted group-hover:text-ink" title={bar.nodeId}>
+        {nested ? <span title="Calls a sub-workflow" className="shrink-0 text-[10px] text-[#5b8def]">⧉</span> : null}
+        <span className="truncate">{bar.nodeId}</span>
       </span>
       <span className="relative h-5">
         <span className="absolute inset-y-0 left-0 right-0 rounded bg-white/[0.04]" />
@@ -276,6 +302,37 @@ function TimelineRow({
         </span>
       </span>
     </button>
+  );
+}
+
+/** Lists the sub-workflow runs this run spawned, each linking to its own detail. */
+function NestedRunsPanel({ childRuns }: { childRuns: NestedRunRef[] }) {
+  return (
+    <section className="rounded-2xl border border-white/8 bg-surface/40 p-5">
+      <div className="mb-3 flex items-center justify-between">
+        <h2 className="font-display text-[15px] font-semibold text-ink">Nested runs</h2>
+        <span className="font-mono text-[11px] text-faint">{childRuns.length}</span>
+      </div>
+      <div className="space-y-1.5">
+        {childRuns.map((child) => (
+          <button
+            key={child.id}
+            type="button"
+            onClick={() => navigate(`/runs/${child.id}`)}
+            className="group flex w-full items-center gap-3 rounded-lg border border-white/6 bg-void/30 px-3 py-2 text-left transition-colors hover:border-white/14 hover:bg-white/4"
+          >
+            <StatusBadge status={child.status} dim />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[13px] text-ink">{child.workflowName}</span>
+              {child.parentNodeId ? (
+                <span className="block truncate font-mono text-[11px] text-faint">via {child.parentNodeId}</span>
+              ) : null}
+            </span>
+            <ChevronRightIcon className="shrink-0 text-[14px] text-faint transition-colors group-hover:text-ink" />
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -325,7 +382,15 @@ function LogLine({ entry }: { entry: RunLogEntry }) {
 }
 
 /** Node-by-node inspector: input, output, error, timing, retries. */
-function NodeInspector({ exec, nodeId }: { exec: NodeExecution | null; nodeId: string | null }) {
+function NodeInspector({
+  exec,
+  nodeId,
+  child,
+}: {
+  exec: NodeExecution | null;
+  nodeId: string | null;
+  child: NestedRunRef | null;
+}) {
   if (!nodeId) {
     return (
       <aside className="rounded-2xl border border-white/8 bg-surface/40 p-5">
@@ -354,6 +419,19 @@ function NodeInspector({ exec, nodeId }: { exec: NodeExecution | null; nodeId: s
         <Meta label="Started" value={exec.startedAt ? new Date(exec.startedAt).toLocaleTimeString(undefined, { hour12: false }) : "—"} />
         <Meta label="Finished" value={exec.finishedAt ? new Date(exec.finishedAt).toLocaleTimeString(undefined, { hour12: false }) : "—"} />
       </dl>
+      {child ? (
+        <button
+          type="button"
+          onClick={() => navigate(`/runs/${child.id}`)}
+          className="mb-3 flex w-full items-center gap-2 rounded-lg border border-[#5b8def]/30 bg-[#5b8def]/10 px-3 py-2 text-left text-[12.5px] text-[#a8c4ff] transition-colors hover:bg-[#5b8def]/16"
+        >
+          <span className="shrink-0">⧉</span>
+          <span className="min-w-0 flex-1 truncate">
+            Nested run · <span className="text-ink">{child.workflowName}</span>
+          </span>
+          <ChevronRightIcon className="shrink-0 text-[13px]" />
+        </button>
+      ) : null}
       <div className="space-y-3">
         {exec.error ? <JsonBlock label="Error" value={exec.error} tone="error" /> : null}
         <JsonBlock label="Input" value={exec.input} />

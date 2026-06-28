@@ -7,6 +7,9 @@ import { parseFailureNotify, type FailureNotifyConfig } from "../engine/failureN
 import { prisma } from "./prisma";
 import { generateWebhookToken } from "./token";
 import { requireWorkspaceMember, requireWorkspaceRole, resolveWorkflowWorkspaceId } from "./authorization";
+import { AUDIT_ACTIONS, safeRecordAudit } from "./audit";
+import { assertFolderInWorkspace } from "./folders";
+import { syncWorkflowTags, type SafeTag } from "./tags";
 import { removeWorkflowSchedules, syncWorkflowSchedule } from "../scheduler/sync";
 import { NotFoundError, ValidationError } from "../errors/HttpError";
 import type { CreateWorkflowInput, UpdateWorkflowInput } from "../validation/workflow.schemas";
@@ -18,6 +21,12 @@ function asJson(definition: WorkflowDefinition): Prisma.InputJsonValue {
   return definition as unknown as Prisma.InputJsonValue;
 }
 
+/** Reference to the folder a workflow is filed under (or null when unfiled). */
+export interface SafeFolderRef {
+  id: string;
+  name: string;
+}
+
 export interface SafeWorkflowSummary {
   id: string;
   workspaceId: string;
@@ -26,6 +35,8 @@ export interface SafeWorkflowSummary {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  folder: SafeFolderRef | null;
+  tags: SafeTag[];
 }
 
 export interface SafeWorkflow extends SafeWorkflowSummary {
@@ -42,10 +53,14 @@ export interface SafeWorkflow extends SafeWorkflowSummary {
   webhookToken: string | null;
 }
 
-/** A workflow row with the latest version number joined in (for `publishedVersion`). */
-type WorkflowWithLatestVersion = PrismaWorkflow & { versions?: { version: number }[] };
+/** A workflow row joined with its latest version number, folder, and tags. */
+type WorkflowWithRelations = PrismaWorkflow & {
+  versions?: { version: number }[];
+  folder: { id: string; name: string } | null;
+  tags: { tag: { id: string; name: string } }[];
+};
 
-function toSummary(workflow: PrismaWorkflow): SafeWorkflowSummary {
+function toSummary(workflow: WorkflowWithRelations): SafeWorkflowSummary {
   return {
     id: workflow.id,
     workspaceId: workflow.workspaceId,
@@ -54,10 +69,12 @@ function toSummary(workflow: PrismaWorkflow): SafeWorkflowSummary {
     isActive: workflow.isActive,
     createdAt: workflow.createdAt.toISOString(),
     updatedAt: workflow.updatedAt.toISOString(),
+    folder: workflow.folder ? { id: workflow.folder.id, name: workflow.folder.name } : null,
+    tags: workflow.tags.map((t) => ({ id: t.tag.id, name: t.tag.name })),
   };
 }
 
-function toWorkflow(workflow: WorkflowWithLatestVersion): SafeWorkflow {
+function toWorkflow(workflow: WorkflowWithRelations): SafeWorkflow {
   const draft = workflow.draftDefinition as unknown as WorkflowDefinition;
   const published =
     workflow.publishedDefinition == null ? null : (workflow.publishedDefinition as unknown as WorkflowDefinition);
@@ -72,18 +89,23 @@ function toWorkflow(workflow: WorkflowWithLatestVersion): SafeWorkflow {
   };
 }
 
-/** Always fetch with the latest version number for `publishedVersion`. */
-const LATEST_VERSION_INCLUDE = {
+/** Always fetch with the latest version number, folder, and tags joined in. */
+const WORKFLOW_INCLUDE = {
   versions: { orderBy: { version: "desc" }, take: 1, select: { version: true } },
+  folder: { select: { id: true, name: true } },
+  tags: { include: { tag: { select: { id: true, name: true } } } },
 } satisfies Prisma.WorkflowInclude;
 
 export async function createWorkflow(userId: string, input: CreateWorkflowInput): Promise<SafeWorkflow> {
-  await requireWorkspaceMember(input.workspaceId, userId);
+  await requireWorkspaceRole(input.workspaceId, userId, "editor");
+  await assertFolderInWorkspace(input.workspaceId, input.folderId);
+
   const workflow = await prisma.workflow.create({
     data: {
       workspaceId: input.workspaceId,
       name: input.name,
       description: input.description,
+      folderId: input.folderId,
       // Every workflow gets a webhook token up front, so its webhook URL is
       // always available the moment a webhook node is added.
       webhookToken: generateWebhookToken(),
@@ -91,13 +113,64 @@ export async function createWorkflow(userId: string, input: CreateWorkflowInput)
       draftDefinition: asJson(EMPTY_DEFINITION),
       publishedDefinition: Prisma.JsonNull,
     },
+    include: WORKFLOW_INCLUDE,
   });
-  return toWorkflow(workflow);
+
+  const tags = input.tags?.length
+    ? await syncWorkflowTags(input.workspaceId, workflow.id, input.tags)
+    : workflow.tags.map((t) => ({ id: t.tag.id, name: t.tag.name }));
+
+  await safeRecordAudit({
+    workspaceId: input.workspaceId,
+    action: AUDIT_ACTIONS.workflowCreated,
+    actorId: userId,
+    targetType: "workflow",
+    targetId: workflow.id,
+    targetName: workflow.name,
+  });
+
+  return toWorkflow({ ...workflow, tags: tags.map((t) => ({ tag: t })) });
 }
 
-export async function listWorkflows(workspaceId: string, userId: string): Promise<SafeWorkflowSummary[]> {
+export interface ListWorkflowsFilters {
+  /** Free-text match against workflow name or description. */
+  search?: string;
+  /** Filter to a single folder; the literal "none" means unfiled workflows. */
+  folderId?: string;
+  tagId?: string;
+  isActive?: boolean;
+  sortBy?: "updatedAt" | "createdAt" | "name";
+  sortDir?: "asc" | "desc";
+}
+
+export async function listWorkflows(
+  workspaceId: string,
+  userId: string,
+  filters: ListWorkflowsFilters = {},
+): Promise<SafeWorkflowSummary[]> {
   await requireWorkspaceMember(workspaceId, userId);
-  const workflows = await prisma.workflow.findMany({ where: { workspaceId }, orderBy: { createdAt: "asc" } });
+
+  const where: Prisma.WorkflowWhereInput = {
+    workspaceId,
+    isActive: filters.isActive,
+    folderId: filters.folderId === undefined ? undefined : filters.folderId === "none" ? null : filters.folderId,
+    tags: filters.tagId ? { some: { tagId: filters.tagId } } : undefined,
+    OR: filters.search
+      ? [
+          { name: { contains: filters.search, mode: "insensitive" } },
+          { description: { contains: filters.search, mode: "insensitive" } },
+        ]
+      : undefined,
+  };
+
+  const sortBy = filters.sortBy ?? "updatedAt";
+  const sortDir = filters.sortDir ?? "desc";
+
+  const workflows = await prisma.workflow.findMany({
+    where,
+    include: WORKFLOW_INCLUDE,
+    orderBy: { [sortBy]: sortDir },
+  });
   return workflows.map(toSummary);
 }
 
@@ -105,7 +178,7 @@ export async function getWorkflow(workflowId: string, userId: string): Promise<S
   const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
   await requireWorkspaceMember(workspaceId, userId);
 
-  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId }, include: LATEST_VERSION_INCLUDE });
+  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId }, include: WORKFLOW_INCLUDE });
   if (!workflow) throw new NotFoundError("Workflow not found");
   return toWorkflow(workflow);
 }
@@ -128,7 +201,8 @@ export async function updateWorkflow(
   input: UpdateWorkflowInput,
 ): Promise<UpdateWorkflowResult> {
   const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
-  await requireWorkspaceRole(workspaceId, userId, "member");
+  await requireWorkspaceRole(workspaceId, userId, "editor");
+  if (input.folderId !== undefined) await assertFolderInWorkspace(workspaceId, input.folderId);
 
   let warnings: string[] = [];
   if (input.definition) {
@@ -151,9 +225,15 @@ export async function updateWorkflow(
           : input.failureNotify === null
             ? Prisma.DbNull
             : (input.failureNotify as unknown as Prisma.InputJsonValue),
+      // undefined = leave filed where it is, null = un-file, string = move.
+      folderId: input.folderId,
     },
-    include: LATEST_VERSION_INCLUDE,
+    include: WORKFLOW_INCLUDE,
   });
+
+  const tags = input.tags !== undefined
+    ? await syncWorkflowTags(workspaceId, workflow.id, input.tags)
+    : workflow.tags.map((t) => ({ id: t.tag.id, name: t.tag.name }));
 
   await syncWorkflowSchedule({
     id: workflow.id,
@@ -161,15 +241,26 @@ export async function updateWorkflow(
     definition: (workflow.publishedDefinition as unknown as WorkflowDefinition) ?? EMPTY_DEFINITION,
   });
 
-  return { workflow: toWorkflow(workflow), warnings };
+  return { workflow: toWorkflow({ ...workflow, tags: tags.map((t) => ({ tag: t })) }), warnings };
 }
 
 export async function deleteWorkflow(workflowId: string, userId: string): Promise<void> {
   const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
   // Deleting a workflow is an admin-tier action; creating/editing is open to any member.
   await requireWorkspaceRole(workspaceId, userId, "admin");
+  // Capture the name before the row is gone, for a self-contained audit entry.
+  const workflow = await prisma.workflow.findUnique({ where: { id: workflowId }, select: { name: true } });
   await prisma.workflow.delete({ where: { id: workflowId } });
   await removeWorkflowSchedules(workflowId);
+
+  await safeRecordAudit({
+    workspaceId,
+    action: AUDIT_ACTIONS.workflowDeleted,
+    actorId: userId,
+    targetType: "workflow",
+    targetId: workflowId,
+    targetName: workflow?.name ?? null,
+  });
 }
 
 /* ── Versioning: publish / rollback / history ─────────────────────────────── */
@@ -209,7 +300,7 @@ export async function publishWorkflow(
   options: { note?: string } = {},
 ): Promise<{ workflow: SafeWorkflow; version: SafeWorkflowVersion }> {
   const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
-  await requireWorkspaceRole(workspaceId, userId, "member");
+  await requireWorkspaceRole(workspaceId, userId, "editor");
 
   const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
   if (!workflow) throw new NotFoundError("Workflow not found");
@@ -236,7 +327,7 @@ export async function rollbackWorkflow(
   versionId: string,
 ): Promise<{ workflow: SafeWorkflow; version: SafeWorkflowVersion }> {
   const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
-  await requireWorkspaceRole(workspaceId, userId, "member");
+  await requireWorkspaceRole(workspaceId, userId, "editor");
 
   const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
   if (!workflow) throw new NotFoundError("Workflow not found");
@@ -290,11 +381,22 @@ async function promoteToVersion(
         // A rollback also reverts the draft; a normal publish leaves the draft as-is.
         draftDefinition: options.resetDraft ? asJson(definition) : undefined,
       },
-      include: LATEST_VERSION_INCLUDE,
+      include: WORKFLOW_INCLUDE,
     }),
   ]);
 
   await syncWorkflowSchedule({ id: updated.id, isActive: updated.isActive, definition });
+
+  await safeRecordAudit({
+    workspaceId: updated.workspaceId,
+    action: AUDIT_ACTIONS.workflowPublished,
+    actorId: userId,
+    actorName: author?.name ?? null,
+    targetType: "workflow",
+    targetId: updated.id,
+    targetName: updated.name,
+    metadata: { version: version.version, note },
+  });
 
   return {
     workflow: toWorkflow(updated),
@@ -371,13 +473,13 @@ export async function getWorkflowVersion(
 
 /**
  * Resolves the definition a run should execute for a given trigger source:
- * manual editor runs test the **draft**; webhook/schedule triggers run the
- * **published** version. Throws if a trigger needs a published version that
- * doesn't exist yet.
+ * manual editor runs test the **draft**; every production trigger
+ * (webhook/schedule/api) runs the **published** version. Throws if a trigger
+ * needs a published version that doesn't exist yet.
  */
 export function resolveRunnableDefinition(
   workflow: Pick<PrismaWorkflow, "draftDefinition" | "publishedDefinition">,
-  trigger: "manual" | "webhook" | "schedule",
+  trigger: "manual" | "webhook" | "schedule" | "api",
 ): WorkflowDefinition {
   if (trigger === "manual") {
     return workflow.draftDefinition as unknown as WorkflowDefinition;

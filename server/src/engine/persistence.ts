@@ -31,6 +31,10 @@ export interface RunRecord {
   definition: WorkflowDefinition | null;
   /** Origin run id when this run is a replay, else null. */
   replayOfId: string | null;
+  /** Parent run id when this run is a nested sub-workflow invocation, else null. */
+  parentRunId: string | null;
+  /** The `flow.subworkflow` node in the parent that spawned this run, else null. */
+  parentNodeId: string | null;
   nodeExecutions: NodeExecutionRecord[];
 }
 
@@ -49,6 +53,12 @@ export interface RunRecorder {
     definition?: WorkflowDefinition | null;
     /** Set when this run is a replay of an earlier run. */
     replayOfId?: string | null;
+    /** The user who triggered this run (manual/replay); null for webhook/schedule. */
+    triggeredById?: string | null;
+    /** Set when this run is a nested sub-workflow invocation: the parent run id. */
+    parentRunId?: string | null;
+    /** The `flow.subworkflow` node in the parent that spawned this run. */
+    parentNodeId?: string | null;
   }): Promise<string>;
   /**
    * Transition an existing run into `running` for a fresh attempt: stamps
@@ -91,6 +101,8 @@ export class InMemoryRunRecorder implements RunRecorder {
     payload: unknown;
     definition?: WorkflowDefinition | null;
     replayOfId?: string | null;
+    parentRunId?: string | null;
+    parentNodeId?: string | null;
   }): Promise<string> {
     const id = this.nextId("run");
     this.runs.set(id, {
@@ -105,6 +117,8 @@ export class InMemoryRunRecorder implements RunRecorder {
       finishedAt: null,
       definition: data.definition ?? null,
       replayOfId: data.replayOfId ?? null,
+      parentRunId: data.parentRunId ?? null,
+      parentNodeId: data.parentNodeId ?? null,
       nodeExecutions: [],
     });
     return id;

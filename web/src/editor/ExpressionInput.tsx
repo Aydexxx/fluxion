@@ -46,11 +46,18 @@ export function ExpressionInput({
   const nodes = useEditor((s) => s.nodes);
   const edges = useEditor((s) => s.edges);
   const activeRun = useEditor((s) => s.activeRun);
+  const variables = useEditor((s) => s.variables);
+  const secrets = useEditor((s) => s.secrets);
 
-  const { scope, sources } = useMemo(
-    () => buildSampleScope(nodes, edges, activeRun, nodeId),
-    [nodes, edges, activeRun, nodeId],
-  );
+  const { scope, sources } = useMemo(() => {
+    const base = buildSampleScope(nodes, edges, activeRun, nodeId);
+    // Augment the preview scope with workspace values: variables resolve to their
+    // real value; secrets resolve to a mask (the client never has the plaintext),
+    // so a `{{ secrets.X }}` chip previews as masked rather than "missing".
+    const vars = Object.fromEntries(variables.map((v) => [v.key, v.value]));
+    const maskedSecrets = Object.fromEntries(secrets.map((s) => [s.key, "••••••"]));
+    return { scope: { ...base.scope, vars, secrets: maskedSecrets }, sources: base.sources };
+  }, [nodes, edges, activeRun, nodeId, variables, secrets]);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
@@ -164,7 +171,17 @@ export function ExpressionInput({
         </button>
 
         {pickerOpen ? (
-          <DataPicker sources={sources} onPick={handlePick} onClose={() => setPickerOpen(false)} />
+          <DataPicker
+            sources={sources}
+            variables={variables}
+            secrets={secrets}
+            onPick={handlePick}
+            onManage={() => {
+              setPickerOpen(false);
+              useEditor.getState().setVariablesManagerOpen(true);
+            }}
+            onClose={() => setPickerOpen(false)}
+          />
         ) : null}
       </div>
 

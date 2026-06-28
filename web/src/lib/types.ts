@@ -7,16 +7,53 @@ export interface User {
   createdAt: string;
 }
 
+/** RBAC roles, in ascending privilege. */
+export type WorkspaceRole = "viewer" | "editor" | "admin" | "owner";
+
 export interface Workspace {
   id: string;
   name: string;
   ownerId: string;
+  /** The current user's role in this workspace (drives client-side gating). */
+  role: WorkspaceRole;
 }
 
 export interface AuthResponse {
   token: string;
   user: User;
   workspace?: Workspace;
+}
+
+/** A confirmed member of a workspace (members management screen). */
+export interface WorkspaceMember {
+  userId: string;
+  name: string;
+  email: string;
+  role: WorkspaceRole;
+}
+
+/** A pending invite, as seen on the members management screen. */
+export interface PendingInvite {
+  id: string;
+  email: string;
+  role: WorkspaceRole;
+  invitedByName: string | null;
+  createdAt: string;
+}
+
+export interface WorkspaceMembers {
+  members: WorkspaceMember[];
+  invites: PendingInvite[];
+}
+
+/** An invite as seen by its recipient. */
+export interface MyInvite {
+  id: string;
+  workspaceId: string;
+  workspaceName: string;
+  role: WorkspaceRole;
+  invitedByName: string | null;
+  createdAt: string;
 }
 
 /** A node in the workflow DAG. `config` is freeform per node type. */
@@ -53,6 +90,22 @@ export interface TemplateSummary {
   definition: WorkflowDefinition;
 }
 
+/** A flat (non-nested) grouping of workflows within a workspace. */
+export interface Folder {
+  id: string;
+  workspaceId: string;
+  name: string;
+  workflowCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A reusable, workspace-scoped label (names are stored lowercase). */
+export interface Tag {
+  id: string;
+  name: string;
+}
+
 /** Summary shape returned by GET /workflows (no definition). */
 export interface WorkflowSummary {
   id: string;
@@ -62,6 +115,22 @@ export interface WorkflowSummary {
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
+  folder: { id: string; name: string } | null;
+  tags: Tag[];
+}
+
+export type WorkflowSortBy = "updatedAt" | "createdAt" | "name";
+export type SortDir = "asc" | "desc";
+
+/** Query params accepted by GET /workflows (server does the filtering/sorting). */
+export interface ListWorkflowsParams {
+  search?: string;
+  /** A folder id, or the literal "none" for unfiled workflows. */
+  folderId?: string;
+  tagId?: string;
+  isActive?: boolean;
+  sortBy?: WorkflowSortBy;
+  sortDir?: SortDir;
 }
 
 /** Workflow-level failure-alert config: notify a channel when a run fails. */
@@ -141,7 +210,7 @@ export interface PublishResponse {
 /* ── Execution / runs (Phase 3) ─────────────────────────────────────────── */
 
 export type ExecutionStatus = "queued" | "running" | "success" | "failed";
-export type RunTriggerType = "manual" | "webhook" | "schedule";
+export type RunTriggerType = "manual" | "webhook" | "schedule" | "api";
 
 /** Per-node result captured during a run. */
 export interface NodeExecution {
@@ -168,6 +237,17 @@ export interface RunLogEntry {
   nodeId: string | null;
 }
 
+/** A nested sub-workflow run spawned by a `flow.subworkflow` node in this run. */
+export interface NestedRunRef {
+  id: string;
+  /** The Call Workflow node in this run that spawned the nested run. */
+  parentNodeId: string | null;
+  workflowId: string;
+  workflowName: string;
+  status: ExecutionStatus;
+  error: string | null;
+}
+
 /** Full run returned by POST /workflows/:id/run and GET /runs/:id. */
 export interface WorkflowRun {
   id: string;
@@ -181,6 +261,12 @@ export interface WorkflowRun {
   finishedAt: string | null;
   /** Origin run id when this run is a replay, else null. */
   replayOfId: string | null;
+  /** Parent run id when this run is itself a nested sub-workflow run, else null. */
+  parentRunId?: string | null;
+  /** Back-reference to the parent run when nested (from GET /runs/:id). */
+  parentRun?: { id: string; workflowId: string; workflowName: string } | null;
+  /** Sub-workflow runs this run spawned, keyed to their calling node (from GET /runs/:id). */
+  childRuns?: NestedRunRef[];
   nodeExecutions: NodeExecution[];
 }
 
@@ -201,6 +287,24 @@ export interface CredentialTypeSpec {
   blurb: string;
   fields: CredentialFieldSpec[];
   previewKey: string | null;
+}
+
+/** A reusable workspace variable (plain value), referenced via `{{ vars.KEY }}`. */
+export interface WorkspaceVariable {
+  id: string;
+  key: string;
+  value: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A reusable workspace secret, referenced via `{{ secrets.KEY }}`. The value is
+ *  never returned by the API — only its key is exposed. */
+export interface WorkspaceSecret {
+  id: string;
+  key: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Client-safe credential metadata — never includes secret values. */
@@ -265,6 +369,86 @@ export interface WorkspaceRunsPage {
   runs: WorkspaceRunSummary[];
   /** Pass back as `cursor` to fetch the next page; null when there are no more. */
   nextCursor: string | null;
+}
+
+/* ── Notifications ──────────────────────────────────────────────────────── */
+
+export type NotificationType = "workspace.invited" | "run.failed" | "role.changed" | "mention";
+
+/** A persisted in-app notification (the bell). `data` carries deep-link context. */
+export interface AppNotification {
+  id: string;
+  type: string;
+  title: string;
+  body: string | null;
+  workspaceId: string | null;
+  data: Record<string, unknown> | null;
+  read: boolean;
+  createdAt: string;
+}
+
+/** One page of notifications plus the unread count + keyset cursor. */
+export interface NotificationsPage {
+  notifications: AppNotification[];
+  unreadCount: number;
+  nextCursor: string | null;
+}
+
+/* ── API keys (programmatic access) ─────────────────────────────────────── */
+
+/** The capability scopes an API key can carry (mirrors the server's API_SCOPES). */
+export type ApiScope = "workflows:read" | "workflows:run";
+
+/** Client-safe view of an API key — never includes the secret or its hash. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  /** Non-secret display slice (e.g. "flux_AbC123"). */
+  prefix: string;
+  scopes: ApiScope[];
+  lastUsedAt: string | null;
+  createdByName: string | null;
+  createdAt: string;
+}
+
+/** A freshly-created key — the only time the full `key` is ever returned. */
+export interface CreatedApiKey extends ApiKey {
+  key: string;
+}
+
+/* ── Audit log ──────────────────────────────────────────────────────────── */
+
+/** A single audit entry (who did what to what, when). */
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  actorId: string | null;
+  actorName: string | null;
+  targetType: string | null;
+  targetId: string | null;
+  targetName: string | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+/** A distinct actor in a workspace's audit log (for the filter dropdown). */
+export interface AuditActor {
+  id: string;
+  name: string;
+}
+
+/** One page of audit entries plus the known actors + keyset cursor. */
+export interface AuditLogPage {
+  entries: AuditLogEntry[];
+  actors: AuditActor[];
+  nextCursor: string | null;
+}
+
+export interface AuditLogFilters {
+  actorId?: string;
+  action?: string;
+  from?: string;
+  to?: string;
 }
 
 /* ── Analytics ──────────────────────────────────────────────────────────── */

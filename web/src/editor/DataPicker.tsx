@@ -1,22 +1,31 @@
 import { useState } from "react";
 import type { SampleSource } from "./sampleData";
+import type { WorkspaceVariable, WorkspaceSecret } from "../lib/types";
 import { categoryAccent, getNodeSpec } from "./nodeCatalog";
 import { formatValue } from "./references";
-import { ChevronRightIcon } from "../components/icons";
+import { BracesIcon, ChevronRightIcon, KeyIcon } from "../components/icons";
 
 /**
- * Popover tree of the data available to a node: the trigger payload and every
- * upstream node's sample output (pinned mock or last-run). Clicking any field
- * inserts a `{{ ... }}` reference for it via `onPick`. Mouse-down is suppressed
- * throughout so the host input keeps focus and its caret position.
+ * Popover tree of the data available to a node: workspace variables/secrets, the
+ * trigger payload, and every upstream node's sample output (pinned mock or
+ * last-run). Clicking any field inserts a `{{ ... }}` reference for it via
+ * `onPick`. Mouse-down is suppressed throughout so the host input keeps focus
+ * and its caret position.
  */
 export function DataPicker({
   sources,
+  variables = [],
+  secrets = [],
   onPick,
+  onManage,
   onClose,
 }: {
   sources: SampleSource[];
+  variables?: WorkspaceVariable[];
+  secrets?: WorkspaceSecret[];
   onPick: (ref: string) => void;
+  /** Opens the variables & secrets settings dialog from the picker. */
+  onManage?: () => void;
   onClose: () => void;
 }) {
   const hasAny = sources.some((s) => s.origin !== "none");
@@ -41,6 +50,26 @@ export function DataPicker({
         </button>
       </div>
 
+      {variables.length > 0 ? (
+        <KeyedSection
+          title="Variables"
+          icon={<BracesIcon />}
+          accent="#5b8cff"
+          items={variables.map((v) => ({ key: v.key, preview: v.value, ref: `vars.${v.key}` }))}
+          onPick={onPick}
+        />
+      ) : null}
+
+      {secrets.length > 0 ? (
+        <KeyedSection
+          title="Secrets"
+          icon={<KeyIcon />}
+          accent="#e0a33e"
+          items={secrets.map((s) => ({ key: s.key, preview: "••••••", ref: `secrets.${s.key}` }))}
+          onPick={onPick}
+        />
+      ) : null}
+
       {!hasAny ? (
         <p className="px-2 py-3 text-[12px] leading-relaxed text-faint">
           No sample data yet. Run the workflow, or pin sample data to an upstream node, to map fields here.
@@ -48,6 +77,80 @@ export function DataPicker({
       ) : (
         sources.map((source) => <SourceTree key={source.id} source={source} onPick={onPick} />)
       )}
+
+      {onManage ? (
+        <>
+          <div className="my-1 h-px bg-white/8" />
+          <button
+            type="button"
+            onClick={onManage}
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11.5px] text-muted transition-colors hover:bg-white/5 hover:text-ink"
+          >
+            <BracesIcon className="text-[12px] text-faint" />
+            Manage variables &amp; secrets
+          </button>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * A flat, collapsible section of workspace key/value references (variables or
+ * secrets). Each row inserts `{{ vars.KEY }}` / `{{ secrets.KEY }}`; secret
+ * values are shown masked.
+ */
+function KeyedSection({
+  title,
+  icon,
+  accent,
+  items,
+  onPick,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  accent: string;
+  items: { key: string; preview: string; ref: string }[];
+  onPick: (ref: string) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className="rounded-lg">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-white/5"
+      >
+        <ChevronRightIcon
+          className="text-[12px] text-faint transition-transform"
+          style={{ transform: open ? "rotate(90deg)" : "none" }}
+        />
+        <span className="flex size-4 items-center justify-center text-[12px]" style={{ color: accent }}>
+          {icon}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink">{title}</span>
+        <span className="text-[10px] text-faint">{items.length}</span>
+      </button>
+      {open ? (
+        <div className="ml-3 border-l border-white/8 pl-1">
+          {items.map((item) => (
+            <div key={item.key} className="group flex items-center rounded-md px-2 py-1 hover:bg-white/5">
+              <span className="mr-1 inline-block w-3 shrink-0" />
+              <button
+                type="button"
+                onClick={() => onPick(`{{ ${item.ref} }}`)}
+                className="flex min-w-0 flex-1 items-center text-left"
+                title={`Insert {{ ${item.ref} }}`}
+              >
+                <span className="truncate font-mono text-[11.5px] text-accent-bright group-hover:text-accent">
+                  {item.key}
+                </span>
+                <span className="ml-2 truncate font-mono text-[11px] text-faint">{item.preview}</span>
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

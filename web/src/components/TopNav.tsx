@@ -1,8 +1,14 @@
 import { useState } from "react";
 import { useAuth } from "../store/auth";
 import { navigate, useRoute } from "../lib/router";
+import { canDeleteResources, canEdit, canManageMembers } from "../lib/permissions";
 import { CredentialsManager } from "./CredentialsManager";
-import { ChartIcon, GridIcon, HistoryIcon, KeyIcon, Logo, LogoutIcon, SparkIcon } from "./icons";
+import { VariablesManager } from "./VariablesManager";
+import { ApiKeysManager } from "./ApiKeysManager";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
+import { NotificationBell } from "./NotificationBell";
+import { AuditLogView } from "./AuditLogView";
+import { BracesIcon, ChartIcon, GridIcon, HistoryIcon, KeyIcon, Logo, LogoutIcon, SparkIcon, TerminalIcon } from "./icons";
 
 type NavKey = "workflows" | "templates" | "runs" | "analytics";
 
@@ -20,6 +26,9 @@ export function TopNav({ active }: { active: NavKey }) {
   const logout = useAuth((s) => s.logout);
   const route = useRoute();
   const [credentialsOpen, setCredentialsOpen] = useState(false);
+  const [variablesOpen, setVariablesOpen] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [apiKeysOpen, setApiKeysOpen] = useState(false);
 
   // `route` is read so the nav re-renders on navigation (active state stays in sync).
   void route;
@@ -35,7 +44,7 @@ export function TopNav({ active }: { active: NavKey }) {
           {workspace ? (
             <>
               <span className="mx-1 text-faint">/</span>
-              <span className="text-[13px] text-muted">{workspace.name}</span>
+              <WorkspaceSwitcher />
             </>
           ) : null}
         </div>
@@ -63,6 +72,36 @@ export function TopNav({ active }: { active: NavKey }) {
 
         <div className="flex items-center gap-3">
           <span className="hidden text-[13px] text-muted md:block">{user?.name}</span>
+          <NotificationBell />
+          {workspace && canManageMembers(workspace.role) ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setApiKeysOpen(true)}
+                aria-label="API keys"
+                className="flex items-center gap-1.5 rounded-lg border border-white/8 px-2.5 py-1.5 text-[12.5px] text-muted transition-colors hover:border-white/14 hover:text-ink"
+              >
+                <TerminalIcon className="text-[15px]" /> <span className="hidden sm:inline">API</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAuditOpen(true)}
+                aria-label="Activity log"
+                className="flex items-center gap-1.5 rounded-lg border border-white/8 px-2.5 py-1.5 text-[12.5px] text-muted transition-colors hover:border-white/14 hover:text-ink"
+              >
+                <HistoryIcon className="text-[15px]" /> <span className="hidden sm:inline">Activity</span>
+              </button>
+            </>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => setVariablesOpen(true)}
+            disabled={!workspace}
+            aria-label="Variables and secrets"
+            className="flex items-center gap-1.5 rounded-lg border border-white/8 px-2.5 py-1.5 text-[12.5px] text-muted transition-colors hover:border-white/14 hover:text-ink disabled:opacity-50"
+          >
+            <BracesIcon className="text-[15px]" /> <span className="hidden sm:inline">Variables</span>
+          </button>
           <button
             type="button"
             onClick={() => setCredentialsOpen(true)}
@@ -82,7 +121,27 @@ export function TopNav({ active }: { active: NavKey }) {
         </div>
       </div>
 
-      <CredentialsManager open={credentialsOpen} workspaceId={workspace?.id ?? null} onClose={() => setCredentialsOpen(false)} />
+      <CredentialsManager
+        open={credentialsOpen}
+        workspaceId={workspace?.id ?? null}
+        canEdit={canEdit(workspace?.role)}
+        onClose={() => setCredentialsOpen(false)}
+      />
+
+      <VariablesManager
+        open={variablesOpen}
+        workspaceId={workspace?.id ?? null}
+        canEdit={canEdit(workspace?.role)}
+        canManage={canDeleteResources(workspace?.role)}
+        onClose={() => setVariablesOpen(false)}
+      />
+
+      {workspace ? (
+        <>
+          <AuditLogView open={auditOpen} workspace={workspace} onClose={() => setAuditOpen(false)} />
+          <ApiKeysManager open={apiKeysOpen} workspace={workspace} onClose={() => setApiKeysOpen(false)} />
+        </>
+      ) : null}
     </header>
   );
 }

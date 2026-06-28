@@ -11,6 +11,8 @@ import { KeyIcon, PlusIcon, TrashIcon } from "./icons";
 interface Props {
   open: boolean;
   workspaceId: string | null;
+  /** When false (viewer role), the vault is read-only — add/edit/delete are hidden. */
+  canEdit?: boolean;
   onClose: () => void;
 }
 
@@ -19,7 +21,7 @@ interface Props {
  * secrets never leave the server) and lets a member add, edit, or delete them.
  * The fields shown per type come from the backend's credential type catalog.
  */
-export function CredentialsManager({ open, workspaceId, onClose }: Props) {
+export function CredentialsManager({ open, workspaceId, canEdit = true, onClose }: Props) {
   const toast = useToast();
   const [types, setTypes] = useState<CredentialTypeSpec[] | null>(null);
   const [creds, setCreds] = useState<Credential[] | null>(null);
@@ -86,7 +88,7 @@ export function CredentialsManager({ open, workspaceId, onClose }: Props) {
         title="Credentials"
         description="Encrypted secrets for this workspace"
       />
-      {editing && types ? (
+      {editing && types && canEdit ? (
         <CredentialForm
           types={types}
           workspaceId={workspaceId as string}
@@ -102,6 +104,7 @@ export function CredentialsManager({ open, workspaceId, onClose }: Props) {
           <CredentialList
             creds={creds}
             types={types}
+            canEdit={canEdit}
             onAdd={() => setEditing("new")}
             onEdit={(c) => setEditing(c)}
             onDelete={requestDelete}
@@ -119,25 +122,29 @@ function typeLabel(types: CredentialTypeSpec[] | null, type: string): string {
 function CredentialList({
   creds,
   types,
+  canEdit,
   onAdd,
   onEdit,
   onDelete,
 }: {
   creds: Credential[] | null;
   types: CredentialTypeSpec[] | null;
+  canEdit: boolean;
   onAdd: () => void;
   onEdit: (c: Credential) => void;
   onDelete: (c: Credential) => void;
 }) {
   return (
     <div className="space-y-3">
-      <button
-        type="button"
-        onClick={onAdd}
-        className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/12 px-3 py-2.5 text-[13px] font-medium text-accent-bright transition-colors hover:border-accent/40 hover:bg-accent/8"
-      >
-        <PlusIcon className="text-[15px]" /> Add credential
-      </button>
+      {canEdit ? (
+        <button
+          type="button"
+          onClick={onAdd}
+          className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-white/12 px-3 py-2.5 text-[13px] font-medium text-accent-bright transition-colors hover:border-accent/40 hover:bg-accent/8"
+        >
+          <PlusIcon className="text-[15px]" /> Add credential
+        </button>
+      ) : null}
 
       {creds === null ? (
         <p className="py-6 text-center text-[13px] text-muted">Loading…</p>
@@ -164,21 +171,25 @@ function CredentialList({
                     ))}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => onEdit(c)}
-                className="rounded-md px-2 py-1 text-[12px] text-muted transition-colors hover:bg-white/5 hover:text-ink"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                aria-label="Delete credential"
-                onClick={() => onDelete(c)}
-                className="rounded-md p-1.5 text-faint transition-colors hover:bg-red-500/10 hover:text-red-300"
-              >
-                <TrashIcon />
-              </button>
+              {canEdit ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => onEdit(c)}
+                    className="rounded-md px-2 py-1 text-[12px] text-muted transition-colors hover:bg-white/5 hover:text-ink"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Delete credential"
+                    onClick={() => onDelete(c)}
+                    className="rounded-md p-1.5 text-faint transition-colors hover:bg-red-500/10 hover:text-red-300"
+                  >
+                    <TrashIcon />
+                  </button>
+                </>
+              ) : null}
             </li>
           ))}
         </ul>

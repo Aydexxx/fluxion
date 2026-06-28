@@ -10,6 +10,10 @@ import { loopExecutor } from "./executors/logicLoop";
 import { filterExecutor } from "./executors/logicFilter";
 import { llmExecutor } from "./executors/aiLlm";
 import { agentExecutor } from "./executors/aiAgent";
+import { openaiExecutor } from "./executors/aiOpenai";
+import { subworkflowExecutor } from "./executors/flowSubworkflow";
+import { githubExecutor } from "./executors/actionGithub";
+import { notionExecutor } from "./executors/actionNotion";
 import { outputResponseExecutor } from "./executors/outputResponse";
 
 /**
@@ -56,5 +60,9 @@ export function createDefaultRegistry(): NodeExecutorRegistry {
     .register(filterExecutor)
     .register(llmExecutor)
     .register(agentExecutor)
+    .register(openaiExecutor)
+    .register(subworkflowExecutor)
+    .register(githubExecutor)
+    .register(notionExecutor)
     .register(outputResponseExecutor);
 }

@@ -4,7 +4,7 @@ import type { WorkflowNode } from "../dag/types";
 export type ExecutionStatusValue = "queued" | "running" | "success" | "failed";
 
 /** What kicked off a run (mirrors the Prisma `RunTrigger` enum). */
-export type RunTriggerValue = "manual" | "webhook" | "schedule";
+export type RunTriggerValue = "manual" | "webhook" | "schedule" | "api";
 
 /** A decrypted credential as an executor sees it: its type plus its field values. */
 export interface CredentialSecret {
@@ -21,6 +21,26 @@ export interface CredentialSecret {
  */
 export interface CredentialAccessor {
   resolve(credentialId: string): Promise<CredentialSecret | null>;
+}
+
+/**
+ * Workspace variables + secrets resolved for a run, as flat `key -> value` maps.
+ * `secrets` holds decrypted plaintext — produced only at execution time and used
+ * solely to fill the run's template scope; it never travels to the API/client.
+ */
+export interface ResolvedVariables {
+  vars: Record<string, string>;
+  secrets: Record<string, string>;
+}
+
+/**
+ * Loads and decrypts a workspace's variables + secrets for a run. Bound to the
+ * run's workspace (so a node can only reach its own tenant's values) and invoked
+ * once at run start — decryption happens here, inside the worker (or the
+ * single-node tester), exactly like {@link CredentialAccessor}.
+ */
+export interface VariableResolver {
+  resolve(): Promise<ResolvedVariables>;
 }
 
 /** SMTP connection + sender details resolved from an `smtp` credential. */
@@ -88,6 +108,36 @@ export interface NodeLimits {
   aiTimeoutMs: number;
 }
 
+/** One invocation of a sub-workflow by a `flow.subworkflow` node. */
+export interface SubworkflowInvocation {
+  /** The calling `flow.subworkflow` node's id in the parent definition (for run linkage). */
+  callerNodeId: string;
+  /** Id of the target workflow to run (must live in the parent run's workspace). */
+  targetWorkflowId: string;
+  /** Data mapped into the sub-workflow — becomes its trigger payload. */
+  input: unknown;
+}
+
+/** Result of a nested sub-workflow run, returned to the calling node. */
+export interface SubworkflowRunResult {
+  /** The nested run's id, linked to the parent run for traceability. */
+  runId: string;
+  status: "success" | "failed";
+  /** The sub-workflow's resolved output (its Response node's body, or terminal output). */
+  output: unknown;
+  error: string | null;
+}
+
+/**
+ * Executes a sub-workflow as a nested run. Wired by the worker (and recursively
+ * by the runner itself), carrying the call-chain context — depth + ancestor
+ * workflow ids — so it can enforce a max nesting depth and reject cycles. Absent
+ * in single-node tests, where a `flow.subworkflow` node has nothing to run into.
+ */
+export interface SubworkflowRunner {
+  run(invocation: SubworkflowInvocation): Promise<SubworkflowRunResult>;
+}
+
 export interface ExecutionContext {
   workspaceId: string;
   trigger: unknown;
@@ -100,6 +150,8 @@ export interface ExecutionContext {
   db?: DbQueryRunner;
   /** Default per-node timeouts; a node's own `config.timeoutMs` overrides these. */
   limits?: NodeLimits;
+  /** Runs nested sub-workflows for the `flow.subworkflow` node. Absent in single-node tests. */
+  subworkflows?: SubworkflowRunner;
 }
 
 /**

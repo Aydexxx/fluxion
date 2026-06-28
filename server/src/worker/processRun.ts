@@ -3,7 +3,15 @@ import type { RunEventSink, RunLogSink } from "../engine/events";
 import type { RunRecord, RunRecorder } from "../engine/persistence";
 import type { NodeExecutorRegistry } from "../engine/registry";
 import { runWorkflow } from "../engine/runWorkflow";
-import type { CredentialAccessor, DbQueryRunner, EmailSender, LlmSettings, NodeLimits } from "../engine/types";
+import { createSubworkflowRunner, type PublishedWorkflowLoader } from "../engine/subworkflow";
+import type {
+  CredentialAccessor,
+  DbQueryRunner,
+  EmailSender,
+  LlmSettings,
+  NodeLimits,
+  VariableResolver,
+} from "../engine/types";
 
 /** Thrown when a run finishes in a failed state, so the queue treats the job as failed and retries. */
 export class RunFailedError extends Error {
@@ -21,12 +29,22 @@ export interface ProcessRunDeps {
   llm: LlmSettings;
   /** Builds a workspace-scoped credential accessor; secrets are decrypted only here, on the worker. */
   credentialsFor?: (workspaceId: string) => CredentialAccessor;
+  /** Builds a workspace-scoped variable/secret resolver; secrets are decrypted only here, on the worker. */
+  variablesFor?: (workspaceId: string) => VariableResolver;
   /** Real mail transport for the email node. */
   email?: EmailSender;
   /** Real database client for the database node. */
   db?: DbQueryRunner;
   /** Default per-node time budgets. */
   limits?: NodeLimits;
+  /**
+   * Resolves a target workflow's published definition for the `flow.subworkflow`
+   * node. When provided, nested sub-workflow execution is enabled; absent (e.g.
+   * in unit tests that don't exercise nesting) a Call Workflow node fails clearly.
+   */
+  loadPublishedWorkflow?: PublishedWorkflowLoader["load"];
+  /** Max sub-workflow nesting depth (defaults to the engine's ceiling). */
+  maxSubworkflowDepth?: number;
   fetchImpl?: typeof fetch;
   onEvent?: RunEventSink;
   /** Streams structured log lines as the run executes (persistence is via the recorder). */
@@ -61,6 +79,36 @@ export async function processRun(runId: string, deps: ProcessRunDeps): Promise<R
   // pre-snapshot runs).
   const definition = run.definition ?? workflow.definition;
 
+  // Wire nested sub-workflow execution from the top-level run. The call chain
+  // starts at this run, with this workflow as the sole ancestor, so a sub-workflow
+  // that calls back into it is detected as a cycle. Skipped when no loader is
+  // provided (the `flow.subworkflow` node then fails with a clear message).
+  const subworkflows = deps.loadPublishedWorkflow
+    ? createSubworkflowRunner(
+        {
+          recorder: deps.recorder,
+          registry: deps.registry,
+          llm: deps.llm,
+          loader: { load: deps.loadPublishedWorkflow },
+          credentialsFor: deps.credentialsFor,
+          variablesFor: deps.variablesFor,
+          email: deps.email,
+          db: deps.db,
+          limits: deps.limits,
+          fetchImpl: deps.fetchImpl,
+          onEvent: deps.onEvent,
+          onLog: deps.onLog,
+          maxDepth: deps.maxSubworkflowDepth,
+        },
+        {
+          workspaceId: workflow.workspaceId,
+          parentRunId: runId,
+          ancestorWorkflowIds: [run.workflowId],
+          depth: 0,
+        },
+      )
+    : undefined;
+
   return runWorkflow({
     runId,
     workflowId: run.workflowId,
@@ -71,9 +119,11 @@ export async function processRun(runId: string, deps: ProcessRunDeps): Promise<R
     recorder: deps.recorder,
     llm: deps.llm,
     credentials: deps.credentialsFor?.(workflow.workspaceId),
+    variables: deps.variablesFor?.(workflow.workspaceId),
     email: deps.email,
     db: deps.db,
     limits: deps.limits,
+    subworkflows,
     fetchImpl: deps.fetchImpl,
     onEvent: deps.onEvent,
     onLog: deps.onLog,

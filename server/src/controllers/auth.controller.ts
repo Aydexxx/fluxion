@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import type { ApiError } from "../types/api";
 import type { SafeUser } from "../services/users";
-import type { SafeWorkspace } from "../services/workspaces";
+import type { SafeWorkspaceWithRole } from "../services/workspaces";
 import { prisma } from "../services/prisma";
 import { hashPassword, verifyPassword } from "../services/password";
 import { signAccessToken } from "../services/jwt";
@@ -12,7 +12,7 @@ import type { LoginInput, RegisterInput } from "../validation/auth.schemas";
 interface AuthResponse {
   token: string;
   user: SafeUser;
-  workspace: SafeWorkspace;
+  workspace: SafeWorkspaceWithRole;
 }
 
 /** POST /auth/register -> create a user + default workspace, return a token. */

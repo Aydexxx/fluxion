@@ -13,9 +13,13 @@ export const NODE_TYPES = [
   "action.database",
   "ai.llm",
   "ai.agent",
+  "ai.openai",
   "logic.condition",
   "logic.loop",
   "logic.filter",
+  "flow.subworkflow",
+  "action.github",
+  "action.notion",
   "output.response",
 ] as const;
 

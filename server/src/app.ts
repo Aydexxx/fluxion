@@ -5,8 +5,12 @@ import authRoutes from "./routes/auth.routes";
 import analyticsRoutes from "./routes/analytics.routes";
 import credentialRoutes from "./routes/credentials.routes";
 import healthRoutes from "./routes/health.routes";
+import inviteRoutes from "./routes/invites.routes";
+import notificationRoutes from "./routes/notifications.routes";
+import publicApiRoutes from "./routes/publicApi.routes";
 import runRoutes from "./routes/runs.routes";
 import templateRoutes from "./routes/templates.routes";
+import { secretRoutes, variableRoutes } from "./routes/variables.routes";
 import webhookRoutes from "./routes/webhooks.routes";
 import workflowRoutes from "./routes/workflows.routes";
 import workspaceRoutes from "./routes/workspaces.routes";
@@ -41,12 +45,18 @@ export function createApp(): Express {
   app.use("/health", healthRoutes);
   app.use("/auth", authRoutes);
   app.use("/workspaces", workspaceRoutes);
+  app.use("/invites", inviteRoutes);
+  app.use("/notifications", notificationRoutes);
   app.use("/credentials", credentialRoutes);
+  app.use("/variables", variableRoutes);
+  app.use("/secrets", secretRoutes);
   app.use("/workflows", workflowRoutes);
   app.use("/templates", templateRoutes);
   app.use("/runs", runRoutes);
   app.use("/analytics", analyticsRoutes);
   app.use("/webhooks", webhookRoutes);
+  // Public, API-key-authenticated REST surface — separate from the session API above.
+  app.use("/api/v1", publicApiRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

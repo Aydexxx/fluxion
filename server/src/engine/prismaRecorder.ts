@@ -24,6 +24,12 @@ export class PrismaRunRecorder implements RunRecorder {
     payload: unknown;
     definition?: WorkflowDefinition | null;
     replayOfId?: string | null;
+    /** The user who triggered this run (manual/replay); null for webhook/schedule. */
+    triggeredById?: string | null;
+    /** Set when this run is a nested sub-workflow invocation: the parent run id. */
+    parentRunId?: string | null;
+    /** The `flow.subworkflow` node in the parent that spawned this run. */
+    parentNodeId?: string | null;
   }): Promise<string> {
     const run = await this.prisma.workflowRun.create({
       data: {
@@ -33,6 +39,9 @@ export class PrismaRunRecorder implements RunRecorder {
         payload: toJson(data.payload),
         definition: data.definition == null ? undefined : toJson(data.definition),
         replayOfId: data.replayOfId ?? null,
+        triggeredById: data.triggeredById ?? null,
+        parentRunId: data.parentRunId ?? null,
+        parentNodeId: data.parentNodeId ?? null,
       },
       select: { id: true },
     });
@@ -43,6 +52,10 @@ export class PrismaRunRecorder implements RunRecorder {
     // Discard a previous attempt's node executions + logs so a retry starts clean.
     await this.prisma.nodeExecution.deleteMany({ where: { runId } });
     await this.prisma.runLog.deleteMany({ where: { runId } });
+    // Also discard any nested sub-workflow runs this run spawned on a prior attempt,
+    // so a retry re-creates them fresh instead of accumulating duplicates. The FK
+    // cascade clears their own executions/logs (and any deeper nesting).
+    await this.prisma.workflowRun.deleteMany({ where: { parentRunId: runId } });
     await this.prisma.workflowRun.update({
       where: { id: runId },
       data: { status: "running", startedAt: new Date(), finishedAt: null, error: null },
@@ -150,6 +163,8 @@ export class PrismaRunRecorder implements RunRecorder {
       finishedAt: run.finishedAt?.toISOString() ?? null,
       definition: run.definition == null ? null : (run.definition as unknown as WorkflowDefinition),
       replayOfId: run.replayOfId ?? null,
+      parentRunId: run.parentRunId ?? null,
+      parentNodeId: run.parentNodeId ?? null,
       nodeExecutions,
     };
   }

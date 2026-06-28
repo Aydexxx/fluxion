@@ -156,11 +156,11 @@ describe("DELETE /credentials/:id", () => {
     expect(res.status).toBe(404);
   });
 
-  it("rejects deletion by a plain member (requires admin rank)", async () => {
+  it("rejects deletion by an editor (requires admin rank)", async () => {
     const owner = await registerUser("j@x.com");
     const member = await registerUser("k@x.com");
     await prisma.workspaceMember.create({
-      data: { userId: member.userId, workspaceId: owner.workspaceId, role: "member" },
+      data: { userId: member.userId, workspaceId: owner.workspaceId, role: "editor" },
     });
     const created = await request(app)
       .post("/credentials")

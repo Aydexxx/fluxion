@@ -7,6 +7,7 @@ import { verifyAccessToken } from "../services/jwt";
 import { requireWorkspaceMember, resolveWorkflowWorkspaceId } from "../services/authorization";
 import { prisma } from "../services/prisma";
 import { RUN_SUBSCRIBE, RUN_UNSUBSCRIBE, runRoom } from "./events";
+import { userRoom } from "./notifications";
 import { registerPresenceHandlers, type PresenceDeps, type SocketData } from "./presence";
 
 /** Real presence dependencies: authorize against workspace membership, resolve names from the DB. */
@@ -49,6 +50,10 @@ export function attachRealtime(httpServer: HttpServer): IOServer {
   });
 
   io.on("connection", (socket: Socket) => {
+    // Every connection joins its own user room so in-app notifications (invites,
+    // run failures, role changes) reach all of the user's open tabs in real time.
+    void socket.join(userRoom((socket.data as SocketData).userId));
+
     socket.on(RUN_SUBSCRIBE, async (payload: { runId?: string }) => {
       const runId = payload?.runId;
       if (!runId) return;

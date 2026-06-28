@@ -8,6 +8,7 @@ import { NotFoundError } from "../errors/HttpError";
 import { prisma } from "./prisma";
 import { requireWorkspaceRole, resolveWorkflowWorkspaceId } from "./authorization";
 import { createPrismaCredentialAccessor } from "./credentials";
+import { createPrismaVariableResolver } from "./variables";
 import type { TestNodeInput } from "../validation/workflow.schemas";
 
 // The executor set is fixed; build it once and reuse across requests.
@@ -30,7 +31,7 @@ export async function testWorkflowNode(
   input: TestNodeInput,
 ): Promise<SingleNodeResult> {
   const workspaceId = await resolveWorkflowWorkspaceId(workflowId);
-  await requireWorkspaceRole(workspaceId, userId, "member");
+  await requireWorkspaceRole(workspaceId, userId, "editor");
 
   const workflow = await prisma.workflow.findUnique({ where: { id: workflowId } });
   if (!workflow) throw new NotFoundError("Workflow not found");
@@ -49,6 +50,7 @@ export async function testWorkflowNode(
       llm: env.llm,
       // Secrets are resolved + decrypted here, scoped to the workflow's workspace.
       credentials: createPrismaCredentialAccessor(workspaceId),
+      variables: createPrismaVariableResolver(workspaceId),
       email: nodemailerSender,
       db: pgQueryRunner,
       limits: { httpTimeoutMs: env.nodeTimeouts.httpMs, aiTimeoutMs: env.nodeTimeouts.aiMs },

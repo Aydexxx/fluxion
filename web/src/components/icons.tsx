@@ -413,3 +413,85 @@ export function KeyIcon(props: IconProps) {
     </Svg>
   );
 }
+
+export function BellIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+      <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+    </Svg>
+  );
+}
+
+export function FolderIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 6.5a1.5 1.5 0 0 1 1.5-1.5h4l2 2h9a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5Z" />
+    </Svg>
+  );
+}
+
+export function TagIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M11.5 3h-5L3 6.5v5L13.5 21l7-7L11.5 3Z" />
+      <circle cx="8" cy="8" r="1" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+export function EditIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 20h4l11-11-4-4L4 16v4Z" />
+      <path d="M13.5 6.5l4 4" />
+    </Svg>
+  );
+}
+
+export function BracesIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M8 4c-2 0-2.5 1-2.5 3v1.5C5.5 10 5 10.5 3.5 11c1.5.5 2 1 2 2.5V15c0 2 .5 3 2.5 3" />
+      <path d="M16 4c2 0 2.5 1 2.5 3v1.5c0 1.5.5 2 2 2.5-1.5.5-2 1-2 2.5V15c0 2-.5 3-2.5 3" />
+    </Svg>
+  );
+}
+
+export function TerminalIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M7 9l3 3-3 3" />
+      <path d="M13 15h4" />
+    </Svg>
+  );
+}
+
+/* ── Connector node icons ──────────────────────────────────────────────── */
+export function OpenAiIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="7" r="3.2" />
+      <circle cx="6.8" cy="16.5" r="3.2" />
+      <circle cx="17.2" cy="16.5" r="3.2" />
+    </Svg>
+  );
+}
+
+export function GithubIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6 0-1.3-.5-2.4-1.3-3.2.1-.3.6-1.5-.1-3.2 0 0-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1c-.7 1.7-.2 2.9-.1 3.2A4.6 4.6 0 0 0 4 9.5C4 14 6.7 15.1 9.5 15.4c-.6.6-.6 1.2-.5 2V21" />
+    </Svg>
+  );
+}
+
+export function NotionIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M8 16V8l8 8V8" />
+    </Svg>
+  );
+}
