@@ -42,6 +42,8 @@ export interface SafeAuditLog {
   action: string;
   actorId: string | null;
   actorName: string | null;
+  /** The actor's current avatar (resolved at read time), or null. */
+  actorAvatarUrl: string | null;
   targetType: string | null;
   targetId: string | null;
   targetName: string | null;
@@ -49,12 +51,13 @@ export interface SafeAuditLog {
   createdAt: string;
 }
 
-function toSafe(row: PrismaAuditLog): SafeAuditLog {
+function toSafe(row: PrismaAuditLog, avatarByActor: Map<string, string | null>): SafeAuditLog {
   return {
     id: row.id,
     action: row.action,
     actorId: row.actorId,
     actorName: row.actorName,
+    actorAvatarUrl: row.actorId ? avatarByActor.get(row.actorId) ?? null : null,
     targetType: row.targetType,
     targetId: row.targetId,
     targetName: row.targetName,
@@ -206,9 +209,21 @@ export async function listAuditLog(
   const last = page[page.length - 1];
   const nextCursor = hasMore && last ? encodeCursor(last.createdAt, last.id) : null;
 
+  // Resolve each actor's *current* avatar (denormalized name survives deletion, but
+  // the avatar is a live join so a profile change is reflected in the log).
+  const actorIds = [...new Set(page.map((r) => r.actorId).filter((id): id is string => id != null))];
+  const avatarByActor = new Map<string, string | null>();
+  if (actorIds.length > 0) {
+    const users = await prisma.user.findMany({
+      where: { id: { in: actorIds } },
+      select: { id: true, avatarUrl: true },
+    });
+    for (const u of users) avatarByActor.set(u.id, u.avatarUrl ?? null);
+  }
+
   const actors: AuditActor[] = distinctActors
     .filter((a): a is { actorId: string; actorName: string | null } => a.actorId != null)
     .map((a) => ({ id: a.actorId, name: a.actorName ?? "Unknown" }));
 
-  return { entries: page.map(toSafe), actors, nextCursor };
+  return { entries: page.map((row) => toSafe(row, avatarByActor)), actors, nextCursor };
 }

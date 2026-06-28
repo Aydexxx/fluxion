@@ -19,6 +19,8 @@ export interface Participant {
   socketId: string;
   userId: string;
   name: string;
+  /** The user's avatar (data URL), or null to render initials. */
+  avatarUrl: string | null;
   color: string;
 }
 

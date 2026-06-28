@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../store/auth";
 import { runApi, workflowApi, errorMessage } from "../lib/api";
 import type { ExecutionStatus, RunTriggerType, WorkflowSummary, WorkspaceRunSummary } from "../lib/types";
-import { TopNav } from "../components/TopNav";
 import { StatusBadge } from "../editor/RunBits";
 import { Select } from "../components/Field";
 import { EmptyState, ErrorState, LoadingState } from "../components/ui/states";
@@ -124,11 +123,7 @@ export function RunsPage() {
   }, [cursor, loadMore]);
 
   return (
-    <div className="relative h-screen overflow-y-auto bg-base">
-      <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 h-[360px] bloom opacity-70" />
-      <TopNav active="runs" />
-
-      <main className="relative mx-auto max-w-6xl px-6 pb-20 pt-10">
+    <main className="relative mx-auto max-w-6xl px-4 pb-20 pt-8 sm:px-6 sm:pt-10">
         <div>
           <h1 className="font-display text-[28px] font-semibold tracking-tight text-gradient">Runs</h1>
           <p className="mt-1 text-sm text-muted">Every execution across your workspace, with full node-level detail.</p>
@@ -146,7 +141,7 @@ export function RunsPage() {
               className="w-full rounded-lg border border-white/8 bg-surface/40 py-2 pl-9 pr-3 text-[13px] text-ink outline-none transition-colors placeholder:text-faint focus:border-accent/60"
             />
           </div>
-          <div className="w-[140px]">
+          <div className="min-w-[120px] flex-1 sm:w-[140px] sm:flex-none">
             <Select value={status} onChange={(e) => setStatus(e.target.value as ExecutionStatus | "all")}>
               {STATUSES.map((s) => (
                 <option key={s} value={s}>
@@ -155,7 +150,7 @@ export function RunsPage() {
               ))}
             </Select>
           </div>
-          <div className="w-[140px]">
+          <div className="min-w-[120px] flex-1 sm:w-[140px] sm:flex-none">
             <Select value={trigger} onChange={(e) => setTrigger(e.target.value as RunTriggerType | "all")}>
               {TRIGGERS.map((t) => (
                 <option key={t} value={t}>
@@ -164,7 +159,7 @@ export function RunsPage() {
               ))}
             </Select>
           </div>
-          <div className="w-[180px]">
+          <div className="min-w-[140px] flex-1 sm:w-[180px] sm:flex-none">
             <Select value={workflowId} onChange={(e) => setWorkflowId(e.target.value)}>
               <option value="all">All workflows</option>
               {workflows.map((w) => (
@@ -206,11 +201,11 @@ export function RunsPage() {
             />
           </div>
         ) : (
-          <div className="mt-5 overflow-hidden rounded-2xl border border-white/8 bg-surface/40">
+          <div className="mt-5 overflow-x-auto rounded-2xl border border-white/8 bg-surface/40">
             {runs === null ? (
               <LoadingState className="py-16" />
             ) : (
-              <table className="w-full text-left text-[13px]">
+              <table className="w-full min-w-[480px] text-left text-[13px]">
               <thead>
                 <tr className="border-b border-white/8 text-[11px] uppercase tracking-[0.1em] text-faint">
                   <th className="px-4 py-2.5 font-medium">Workflow</th>
@@ -281,8 +276,7 @@ export function RunsPage() {
             </button>
           </div>
         ) : null}
-      </main>
-    </div>
+    </main>
   );
 }
 

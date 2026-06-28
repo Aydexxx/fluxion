@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { errorMessage, inviteApi, workspaceApi } from "../lib/api";
+import { errorMessage, workspaceApi } from "../lib/api";
 import type { WorkspaceRole } from "../lib/types";
-import { canManageMembers, isOwner, roleLabel } from "../lib/permissions";
+import { isOwner, roleLabel } from "../lib/permissions";
 import { useAuth } from "../store/auth";
 import { useToast } from "./ui/toast";
 import { confirm } from "./ui/confirm";
@@ -9,9 +9,7 @@ import { Dialog, DialogBody, DialogFooter, DialogHeader } from "./ui/Dialog";
 import { Button } from "./ui/Button";
 import { Label, TextInput } from "./Field";
 import { Badge } from "./ui/Badge";
-import { MembersManager } from "./MembersManager";
-import { InvitesInbox } from "./InvitesInbox";
-import { CheckIcon, ChevronRightIcon, GridIcon, MailIcon, PlusIcon, TrashIcon } from "./icons";
+import { CheckIcon, ChevronRightIcon, GridIcon, PlusIcon, TrashIcon } from "./icons";
 
 const ROLE_COLOR: Record<WorkspaceRole, string> = {
   owner: "#e0a33e",
@@ -21,10 +19,10 @@ const ROLE_COLOR: Record<WorkspaceRole, string> = {
 };
 
 /**
- * Top-nav workspace switcher. Lists every workspace the user belongs to (with
- * their role), persists the active one, and is the single entry point for the
- * dedicated members/invites surfaces — keeping that management off the main
- * workflow views (progressive disclosure).
+ * Top-bar workspace switcher. Lists every workspace the user belongs to (with
+ * their role), persists the active one, and handles creating/deleting
+ * workspaces. Member management lives in the side panel's Settings group and
+ * personal invitations in the profile menu, keeping this menu focused.
  */
 export function WorkspaceSwitcher() {
   const toast = useToast();
@@ -34,30 +32,11 @@ export function WorkspaceSwitcher() {
   const refreshWorkspaces = useAuth((s) => s.refreshWorkspaces);
 
   const [open, setOpen] = useState(false);
-  const [membersOpen, setMembersOpen] = useState(false);
-  const [invitesOpen, setInvitesOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
-  const [inviteCount, setInviteCount] = useState(0);
 
   const ref = useRef<HTMLDivElement>(null);
-
-  // Poll the invite count once on mount so the badge shows without opening the inbox.
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      try {
-        const mine = await inviteApi.mine();
-        if (alive) setInviteCount(mine.length);
-      } catch {
-        /* non-fatal */
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -118,11 +97,6 @@ export function WorkspaceSwitcher() {
         <Badge color={ROLE_COLOR[workspace.role]} dot={false} className="hidden sm:inline-flex">
           {roleLabel(workspace.role)}
         </Badge>
-        {inviteCount > 0 ? (
-          <span className="flex size-4 items-center justify-center rounded-full bg-accent text-[9px] font-bold text-white">
-            {inviteCount}
-          </span>
-        ) : null}
         <ChevronRightIcon className={`text-[13px] transition-transform ${open ? "rotate-90" : ""}`} />
       </button>
 
@@ -165,36 +139,6 @@ export function WorkspaceSwitcher() {
             role="menuitem"
             onClick={() => {
               setOpen(false);
-              setMembersOpen(true);
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-muted transition-colors hover:bg-white/5 hover:text-ink"
-          >
-            <GridIcon className="text-[14px]" /> Members
-            {canManageMembers(workspace.role) ? null : <span className="text-[11px] text-faint">(view)</span>}
-          </button>
-
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
-              setInvitesOpen(true);
-            }}
-            className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-muted transition-colors hover:bg-white/5 hover:text-ink"
-          >
-            <MailIcon className="text-[14px]" /> Invitations
-            {inviteCount > 0 ? (
-              <span className="ml-auto flex size-4 items-center justify-center rounded-full bg-accent text-[9px] font-bold text-white">
-                {inviteCount}
-              </span>
-            ) : null}
-          </button>
-
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setOpen(false);
               setCreateOpen(true);
             }}
             className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-muted transition-colors hover:bg-white/5 hover:text-ink"
@@ -214,9 +158,6 @@ export function WorkspaceSwitcher() {
           ) : null}
         </div>
       ) : null}
-
-      <MembersManager open={membersOpen} workspace={workspace} onClose={() => setMembersOpen(false)} />
-      <InvitesInbox open={invitesOpen} onClose={() => setInvitesOpen(false)} onCountChange={setInviteCount} />
 
       <Dialog open={createOpen} onClose={() => setCreateOpen(false)} size="sm">
         <DialogHeader title="New workspace" icon={<PlusIcon />} />

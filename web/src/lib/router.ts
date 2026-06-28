@@ -9,6 +9,7 @@ export type Route =
   | { name: "runs" }
   | { name: "runDetail"; runId: string }
   | { name: "analytics" }
+  | { name: "profile" }
   | { name: "editor"; workflowId: string }
   | { name: "notfound" };
 
@@ -19,6 +20,7 @@ function parse(pathname: string): Route {
   if (pathname === "/templates") return { name: "templates" };
   if (pathname === "/runs") return { name: "runs" };
   if (pathname === "/analytics") return { name: "analytics" };
+  if (pathname === "/profile") return { name: "profile" };
   const runDetail = pathname.match(/^\/runs\/([^/]+)$/);
   if (runDetail) return { name: "runDetail", runId: decodeURIComponent(runDetail[1]) };
   const editor = pathname.match(/^\/workflows\/([^/]+)$/);

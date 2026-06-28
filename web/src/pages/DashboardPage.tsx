@@ -2,21 +2,24 @@ import { useEffect, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useAuth } from "../store/auth";
 import { workflowApi, folderApi, tagApi, errorMessage } from "../lib/api";
-import type { Folder, SortDir, Tag, WorkflowSortBy, WorkflowSummary } from "../lib/types";
+import type { Folder, Tag, WorkflowSummary } from "../lib/types";
 import { navigate } from "../lib/router";
 import { canDeleteResources, canEdit } from "../lib/permissions";
 import { useToast } from "../components/ui/toast";
 import { confirm } from "../components/ui/confirm";
 import { CardSkeletonGrid, EmptyState as EmptyStateUI, ErrorState } from "../components/ui/states";
 import { Badge } from "../components/ui/Badge";
-import { Select, TextInput } from "../components/Field";
 import { timeAgo } from "../lib/format";
-import { TopNav } from "../components/TopNav";
-import { FolderRail } from "../components/FolderRail";
+import { FolderRail, UNFILED } from "../components/FolderRail";
+import { WorkflowFilterBar } from "../components/WorkflowFilterBar";
+import { SORT_OPTIONS, DEFAULT_SORT, type SortOption, type StatusFilter } from "../lib/workflowFilters";
 import { WorkflowOrganizer } from "../components/WorkflowOrganizer";
+import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog";
+import { DashboardTour } from "../components/tour/DashboardTour";
 import {
   FolderIcon,
   GridIcon,
+  LayersIcon,
   Logo,
   PlusIcon,
   SearchIcon,
@@ -26,15 +29,6 @@ import {
 } from "../components/icons";
 import { categoryAccent } from "../editor/nodeCatalog";
 import { riseIn, stagger, still } from "../lib/motion";
-
-/** A single friendly dropdown that maps onto the server's (sortBy, sortDir) pair. */
-const SORT_OPTIONS = [
-  { value: "updated", label: "Recently updated", sortBy: "updatedAt" as WorkflowSortBy, sortDir: "desc" as SortDir },
-  { value: "created", label: "Recently created", sortBy: "createdAt" as WorkflowSortBy, sortDir: "desc" as SortDir },
-  { value: "name-asc", label: "Name (A–Z)", sortBy: "name" as WorkflowSortBy, sortDir: "asc" as SortDir },
-  { value: "name-desc", label: "Name (Z–A)", sortBy: "name" as WorkflowSortBy, sortDir: "desc" as SortDir },
-];
-type SortOption = (typeof SORT_OPTIONS)[number]["value"];
 
 export function DashboardPage() {
   const reduce = useReducedMotion();
@@ -54,12 +48,14 @@ export function DashboardPage() {
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
-  const [sortOption, setSortOption] = useState<SortOption>("updated");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [sortOption, setSortOption] = useState<SortOption>(DEFAULT_SORT);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [tagId, setTagId] = useState<string | null>(null);
+  // null = "All", UNFILED ("none") = "Unfiled", else a folder id.
   const [folderId, setFolderId] = useState<string | null>(null);
 
   const [organizing, setOrganizing] = useState<WorkflowSummary | null>(null);
+  const [savingTemplate, setSavingTemplate] = useState<WorkflowSummary | null>(null);
 
   // Switching workspaces invalidates every filter — they reference that workspace's
   // data. Reset during render (React's documented pattern for "adjust state when a
@@ -69,7 +65,7 @@ export function DashboardPage() {
     setFiltersForWorkspace(workspace?.id);
     setSearch("");
     setDebouncedSearch("");
-    setSortOption("updated");
+    setSortOption(DEFAULT_SORT);
     setStatusFilter("all");
     setTagId(null);
     setFolderId(null);
@@ -133,7 +129,10 @@ export function DashboardPage() {
     if (!workspace || creating) return;
     setCreating(true);
     try {
-      const wf = await workflowApi.create(workspace.id, "Untitled workflow");
+      // When viewing a real folder, create the workflow inside it. "All" (null)
+      // and "Unfiled" (UNFILED) both mean "no folder", so we pass nothing.
+      const inFolder = folderId !== null && folderId !== UNFILED ? folderId : undefined;
+      const wf = await workflowApi.create(workspace.id, "Untitled workflow", { folderId: inFolder });
       navigate(`/workflows/${wf.id}`);
     } catch (err) {
       toast.error(errorMessage(err, "Could not create workflow"));
@@ -198,26 +197,65 @@ export function DashboardPage() {
 
   const filtersActive = debouncedSearch !== "" || statusFilter !== "all" || tagId !== null || folderId !== null;
 
+  // The breadcrumb's trailing crumb: the folder name, "Unfiled", or nothing at "All".
+  const activeFolder = folderId && folderId !== UNFILED ? folders.find((f) => f.id === folderId) ?? null : null;
+  const folderCrumb = folderId === UNFILED ? "Unfiled" : activeFolder?.name ?? null;
+
+  const clearFilters = () => {
+    setSearch("");
+    setStatusFilter("all");
+    setTagId(null);
+    setSortOption(DEFAULT_SORT);
+  };
+
   return (
-    <div className="relative h-screen overflow-y-auto bg-base">
-      <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 h-[420px] bloom opacity-80" />
-
-      <TopNav active="workflows" />
-
-      <main className="relative mx-auto max-w-6xl px-6 pb-20 pt-10">
+    <>
+      <main className="relative mx-auto max-w-6xl px-4 pb-20 pt-8 sm:px-6 sm:pt-10">
         <motion.div
           initial={reduce ? false : { opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="flex items-end justify-between gap-4"
+          className="flex flex-wrap items-end justify-between gap-4"
         >
-          <div>
-            <h1 className="font-display text-[28px] font-semibold tracking-tight text-gradient">Workflows</h1>
+          <div className="min-w-0">
+            <nav aria-label="Breadcrumb">
+              <h1 className="flex items-center gap-2 font-display text-[28px] font-semibold tracking-tight">
+                <button
+                  type="button"
+                  onClick={() => setFolderId(null)}
+                  aria-current={folderCrumb ? undefined : "page"}
+                  className={folderCrumb ? "text-muted transition-colors hover:text-ink" : "text-gradient"}
+                >
+                  Workflows
+                </button>
+                {folderCrumb ? (
+                  <>
+                    <span className="text-faint">/</span>
+                    <span className="truncate text-gradient" aria-current="page">
+                      {folderCrumb}
+                    </span>
+                  </>
+                ) : null}
+              </h1>
+            </nav>
             <p className="mt-1 text-sm text-muted">Design, automate, and orchestrate your pipelines.</p>
           </div>
-          <div className="flex shrink-0 items-center gap-2.5">
+          <div className="flex flex-wrap items-center justify-end gap-2.5">
+            <WorkflowFilterBar
+              search={search}
+              onSearchChange={setSearch}
+              sortOption={sortOption}
+              onSortChange={setSortOption}
+              statusFilter={statusFilter}
+              onStatusChange={setStatusFilter}
+              tagId={tagId}
+              onTagChange={setTagId}
+              tags={tags}
+              onClear={clearFilters}
+            />
             <button
               type="button"
+              data-tour="templates"
               onClick={() => navigate("/templates")}
               className="flex items-center gap-2 rounded-xl border border-white/10 px-3.5 py-2.5 text-[13.5px] font-semibold text-ink transition-colors hover:bg-white/5"
             >
@@ -242,7 +280,7 @@ export function DashboardPage() {
           </div>
         </motion.div>
 
-        <div className="mt-6 space-y-3">
+        <div className="mt-6">
           <FolderRail
             folders={folders}
             activeFolderId={folderId}
@@ -252,54 +290,6 @@ export function DashboardPage() {
             onRename={renameFolder}
             onDelete={deleteFolder}
           />
-
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative min-w-[200px] flex-1">
-              <SearchIcon className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[14px] text-faint" />
-              <TextInput
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search workflows…"
-                className="pl-9"
-                aria-label="Search workflows"
-              />
-            </div>
-            <Select
-              value={sortOption}
-              onChange={(e) => setSortOption(e.target.value as SortOption)}
-              className="w-auto"
-              aria-label="Sort by"
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
-            </Select>
-            <Select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}
-              className="w-auto"
-              aria-label="Filter by status"
-            >
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="inactive">Inactive</option>
-            </Select>
-            <Select
-              value={tagId ?? ""}
-              onChange={(e) => setTagId(e.target.value || null)}
-              className="w-auto capitalize"
-              aria-label="Filter by tag"
-            >
-              <option value="">All tags</option>
-              {tags.map((t) => (
-                <option key={t.id} value={t.id} className="capitalize">
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </div>
         </div>
 
         <div className="mt-6">
@@ -311,9 +301,7 @@ export function DashboardPage() {
             filtersActive ? (
               <NoMatches
                 onClear={() => {
-                  setSearch("");
-                  setStatusFilter("all");
-                  setTagId(null);
+                  clearFilters();
                   setFolderId(null);
                 }}
               />
@@ -334,9 +322,11 @@ export function DashboardPage() {
                   reduce={!!reduce}
                   canDelete={mayDelete}
                   canOrganize={mayEdit}
+                  canSaveTemplate={mayEdit}
                   onOpen={() => navigate(`/workflows/${wf.id}`)}
                   onDelete={() => requestDelete(wf)}
                   onOrganize={() => setOrganizing(wf)}
+                  onSaveTemplate={() => setSavingTemplate(wf)}
                 />
               ))}
             </motion.div>
@@ -351,7 +341,16 @@ export function DashboardPage() {
         onClose={() => setOrganizing(null)}
         onSaved={() => reload()}
       />
-    </div>
+
+      <SaveAsTemplateDialog
+        open={savingTemplate !== null}
+        workflowId={savingTemplate?.id ?? null}
+        defaultName={savingTemplate?.name ?? ""}
+        onClose={() => setSavingTemplate(null)}
+      />
+
+      <DashboardTour enabled={workflows !== null} />
+    </>
   );
 }
 
@@ -360,17 +359,21 @@ function WorkflowCard({
   reduce,
   canDelete,
   canOrganize,
+  canSaveTemplate,
   onOpen,
   onDelete,
   onOrganize,
+  onSaveTemplate,
 }: {
   wf: WorkflowSummary;
   reduce: boolean;
   canDelete: boolean;
   canOrganize: boolean;
+  canSaveTemplate: boolean;
   onOpen: () => void;
   onDelete: () => void;
   onOrganize: () => void;
+  onSaveTemplate: () => void;
 }) {
   // A deterministic accent per card from its id keeps the grid colorful-but-restrained.
   const accents = ["#8b7bff", "#4c9bff", "#c26bff", "#34d0a8", "#e0a33e"];
@@ -406,6 +409,20 @@ function WorkflowCard({
           <GridIcon />
         </div>
         <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+          {canSaveTemplate ? (
+            <button
+              type="button"
+              aria-label="Save as template"
+              title="Save as template"
+              onClick={(e) => {
+                e.stopPropagation();
+                onSaveTemplate();
+              }}
+              className="rounded-lg p-1.5 text-faint transition-all hover:bg-white/5 hover:text-ink"
+            >
+              <LayersIcon className="text-[16px]" />
+            </button>
+          ) : null}
           {canOrganize ? (
             <button
               type="button"

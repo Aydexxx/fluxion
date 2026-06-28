@@ -1,5 +1,6 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { usePresence } from "./presence";
+import { Avatar } from "../components/ui/Avatar";
 import type { Participant } from "../lib/presenceEvents";
 
 /** Up to this many avatars render individually; the rest collapse into a "+N". */
@@ -32,11 +33,15 @@ export function PresenceAvatars() {
               animate={reduce ? { opacity: 1 } : { scale: 1, opacity: 1 }}
               exit={reduce ? { opacity: 0 } : { scale: 0.4, opacity: 0 }}
               transition={{ type: "spring", stiffness: 520, damping: 30 }}
-              title={p.name}
-              className="flex size-7 items-center justify-center rounded-full text-[11px] font-semibold text-white ring-2 ring-surface"
-              style={{ background: p.color }}
             >
-              {initials(p.name)}
+              <Avatar
+                name={p.name}
+                avatarUrl={p.avatarUrl}
+                color={p.color}
+                size={28}
+                title={p.name}
+                className="ring-2 ring-surface"
+              />
             </motion.div>
           ))}
         </AnimatePresence>
@@ -57,11 +62,4 @@ function dedupeByUser(participants: Participant[]): Participant[] {
   const seen = new Map<string, Participant>();
   for (const p of participants) if (!seen.has(p.userId)) seen.set(p.userId, p);
   return [...seen.values()];
-}
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }

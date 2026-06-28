@@ -10,6 +10,7 @@ export interface WorkspaceMemberView {
   userId: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
   role: WorkspaceRole;
 }
 
@@ -59,7 +60,7 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
   const [memberships, invites] = await Promise.all([
     prisma.workspaceMember.findMany({
       where: { workspaceId },
-      include: { user: { select: { id: true, name: true, email: true } } },
+      include: { user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
     }),
     prisma.invite.findMany({
       where: { workspaceId, status: "pending" },
@@ -69,7 +70,13 @@ export async function listMembers(workspaceId: string, userId: string): Promise<
 
   // Owners first, then by descending privilege, then name — a stable, readable order.
   const members: WorkspaceMemberView[] = memberships
-    .map((m) => ({ userId: m.user.id, name: m.user.name, email: m.user.email, role: m.role }))
+    .map((m) => ({
+      userId: m.user.id,
+      name: m.user.name,
+      email: m.user.email,
+      avatarUrl: m.user.avatarUrl ?? null,
+      role: m.role,
+    }))
     .sort((a, b) => ROLE_RANK[b.role] - ROLE_RANK[a.role] || a.name.localeCompare(b.name));
 
   return { members, invites: invites.map(toPendingInviteView) };
@@ -192,7 +199,7 @@ export async function updateMemberRole(
 
   const target = await prisma.workspaceMember.findUnique({
     where: { userId_workspaceId: { userId: targetUserId, workspaceId } },
-    include: { user: { select: { id: true, name: true, email: true } } },
+    include: { user: { select: { id: true, name: true, email: true, avatarUrl: true } } },
   });
   if (!target) throw new NotFoundError("Member not found");
 
@@ -237,7 +244,13 @@ export async function updateMemberRole(
     });
   }
 
-  return { userId: target.user.id, name: target.user.name, email: target.user.email, role: updated.role };
+  return {
+    userId: target.user.id,
+    name: target.user.name,
+    email: target.user.email,
+    avatarUrl: target.user.avatarUrl ?? null,
+    role: updated.role,
+  };
 }
 
 /**

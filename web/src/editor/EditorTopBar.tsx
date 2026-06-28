@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import { useEditor } from "./editorStore";
 import { PresenceAvatars } from "./PresenceAvatars";
@@ -5,6 +6,7 @@ import { navigate } from "../lib/router";
 import { useAuth } from "../store/auth";
 import { canEdit as roleCanEdit } from "../lib/permissions";
 import { useToast } from "../components/ui/toast";
+import { SaveAsTemplateDialog } from "../components/SaveAsTemplateDialog";
 import {
   AlertIcon,
   ChevronRightIcon,
@@ -17,6 +19,7 @@ import {
   RotateIcon,
   SaveIcon,
   SearchIcon,
+  SparkIcon,
   SpinnerIcon,
   UploadIcon,
 } from "../components/icons";
@@ -31,6 +34,7 @@ function useCanEditWorkflow(): boolean {
 export function EditorTopBar() {
   const reduce = useReducedMotion();
   const toast = useToast();
+  const workflowId = useEditor((s) => s.id);
   const name = useEditor((s) => s.name);
   const isActive = useEditor((s) => s.isActive);
   const dirty = useEditor((s) => s.dirty);
@@ -44,6 +48,8 @@ export function EditorTopBar() {
   const setCommandPaletteOpen = useEditor((s) => s.setCommandPaletteOpen);
   const previewVersion = useEditor((s) => s.previewVersion);
   const canEdit = useCanEditWorkflow();
+
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   // While previewing a past version the editor is read-only; show a focused banner instead.
   if (previewVersion) return <PreviewBanner />;
@@ -71,6 +77,18 @@ export function EditorTopBar() {
     for (const w of warnings.slice(0, 2)) toast.info(w);
   };
 
+  // A template captures the *saved* draft, so flush any pending edits first.
+  const handleSaveAsTemplate = async () => {
+    if (useEditor.getState().dirty) {
+      const res = await save();
+      if (!res.ok) {
+        toast.error(res.message ?? "Could not save before creating template");
+        return;
+      }
+    }
+    setTemplateOpen(true);
+  };
+
   const handlePublish = async () => {
     const id = toast.loading("Publishing…");
     const res = await useEditor.getState().publish();
@@ -85,6 +103,7 @@ export function EditorTopBar() {
   // Save / undo / redo / palette shortcuts are owned by useEditorShortcuts.
 
   return (
+    <>
     <header className="relative z-30 flex h-14 shrink-0 items-center gap-3 border-b border-white/8 bg-surface/60 px-3 backdrop-blur-xl">
       <button
         type="button"
@@ -148,6 +167,17 @@ export function EditorTopBar() {
         <>
           <button
             type="button"
+            onClick={handleSaveAsTemplate}
+            aria-label="Save as template"
+            title="Save as template"
+            className="flex items-center justify-center rounded-lg border border-white/8 px-2.5 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink"
+          >
+            <SparkIcon className="text-[14px]" />
+          </button>
+
+          <button
+            type="button"
+            data-tour="run-button"
             onClick={handleRun}
             disabled={running}
             className="flex items-center gap-1.5 rounded-lg border border-white/8 px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:border-white/14 hover:text-ink disabled:opacity-70"
@@ -170,6 +200,14 @@ export function EditorTopBar() {
         </>
       ) : null}
     </header>
+
+    <SaveAsTemplateDialog
+      open={templateOpen}
+      workflowId={workflowId}
+      defaultName={name}
+      onClose={() => setTemplateOpen(false)}
+    />
+    </>
   );
 }
 
@@ -185,6 +223,7 @@ function PublishButton({ onPublish }: { onPublish: () => void }) {
   return (
     <button
       type="button"
+      data-tour="publish-button"
       onClick={onPublish}
       disabled={publishing || !canPublish}
       title={canPublish ? "Promote this draft to the live version" : "Nothing new to publish"}

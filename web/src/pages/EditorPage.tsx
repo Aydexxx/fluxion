@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { motion } from "framer-motion";
 import { useEditor } from "../editor/editorStore";
@@ -11,12 +11,14 @@ import { RunHistoryDrawer } from "../editor/RunHistoryDrawer";
 import { VersionHistoryDrawer } from "../editor/VersionHistoryDrawer";
 import { CommandPalette } from "../editor/CommandPalette";
 import { ShortcutsHelp } from "../editor/ShortcutsHelp";
-import { FirstRunGuide } from "../editor/FirstRunGuide";
+import { EditorTour } from "../components/tour/EditorTour";
+import { MobileEditorGate } from "../editor/MobileEditorGate";
 import { FailureAlertDialog } from "../editor/FailureAlertDialog";
 import { useEditorShortcuts } from "../editor/useEditorShortcuts";
 import { connectPresence, disconnectPresence, sendSelection } from "../editor/presence";
 import { CredentialsManager } from "../components/CredentialsManager";
 import { VariablesManager } from "../components/VariablesManager";
+import { useIsMobile } from "../lib/useMediaQuery";
 import { navigate } from "../lib/router";
 import { Logo, SpinnerIcon } from "../components/icons";
 
@@ -35,11 +37,23 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
   // While previewing a past version the editor is read-only: no palette, no inspector.
   const previewing = useEditor((s) => s.previewVersion !== null);
   const applyRemoteGraphOps = useEditor((s) => s.applyRemoteGraphOps);
+  const setMobileReadOnly = useEditor((s) => s.setMobileReadOnly);
+
+  // Phones get a friendly gate over the desktop-first canvas, with an optional
+  // read-only peek. While on a phone the canvas + chrome run view-only.
+  const isMobile = useIsMobile();
+  const [peeking, setPeeking] = useState(false);
+  const editingHidden = previewing || isMobile;
 
   useEffect(() => {
     void load(workflowId);
     return () => reset();
   }, [workflowId, load, reset]);
+
+  // Mirror the phone state into the store so the canvas renders view-only.
+  useEffect(() => {
+    setMobileReadOnly(isMobile);
+  }, [isMobile, setMobileReadOnly]);
 
   // Real-time multi-user awareness: join the workflow's presence room, mirror
   // peers' graph edits into the store, and broadcast our own selection.
@@ -66,16 +80,17 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
       <div className="flex h-screen flex-col bg-base">
         <EditorTopBar />
         <div className="relative flex min-h-0 flex-1">
-          {previewing ? null : <NodePalette />}
+          {editingHidden ? null : <NodePalette />}
           <main className="relative min-w-0 flex-1">
             <WorkflowCanvas />
-            {previewing ? null : <ConfigPanel />}
+            {editingHidden ? null : <ConfigPanel />}
             <RunResultsBar />
             <RunHistoryDrawer />
             <VersionHistoryDrawer />
             {status === "loading" ? <LoadingVeil /> : null}
             {status === "error" ? <ErrorVeil message={error} /> : null}
-            <FirstRunGuide />
+            {isMobile ? null : <EditorTour />}
+            {isMobile && !peeking ? <MobileEditorGate onPeek={() => setPeeking(true)} /> : null}
           </main>
         </div>
       </div>

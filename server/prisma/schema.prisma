@@ -44,6 +44,12 @@ model User {
   email        String   @unique
   passwordHash String
   name         String
+  /// Profile picture, stored as a small self-contained data URL (no object store
+  /// needed). Null = render initials. Shown in nav, presence, members, audit.
+  avatarUrl    String?
+  /// Free-form user preferences (e.g. `{ defaultLanding: "runs" }`). JSON so new
+  /// preferences don't need a migration each time.
+  preferences  Json?
   createdAt    DateTime @default(now())
 
   ownedWorkspaces Workspace[]
@@ -68,6 +74,7 @@ model Workspace {
   variables   WorkspaceVariable[]
   secrets     WorkspaceSecret[]
   apiKeys     ApiKey[]
+  templates   WorkspaceTemplate[]
 
   @@index([ownerId])
 }
@@ -397,6 +404,30 @@ model WorkspaceVariable {
   workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@unique([workspaceId, key])
+  @@index([workspaceId])
+}
+
+/// A user-created, workspace-scoped template: a captured workflow definition the
+/// team can reuse. Saved from an existing workflow (see services/templates),
+/// with credential bindings stripped so no secret reference is carried along.
+/// Distinct from the built-in catalog (which is code, not data).
+model WorkspaceTemplate {
+  id          String @id @default(cuid())
+  workspaceId String
+  name        String
+  description String?
+  /// One-word vibe shown as the card chip (defaults to "Custom").
+  category    String @default("Custom")
+  /// The captured DAG, secret-sanitized. JSON-serializable WorkflowDefinition.
+  definition  Json
+  /// Author of the template (id + denormalized name so the gallery needs no joins).
+  createdById   String?
+  createdByName String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   @@index([workspaceId])
 }
 

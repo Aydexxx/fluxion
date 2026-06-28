@@ -47,7 +47,19 @@ previewed or rolled back (see [Versioning](#workflow-versioning)).
 Workflows can also start from an inbound **webhook** (an unguessable
 per-workflow URL) or a **cron schedule** (BullMQ job schedulers reconciled
 against each workflow's `trigger.schedule` nodes), in addition to a manual
-*Run* click.
+*Run* click. A `flow.subworkflow` node calls **another workflow as a step**,
+recording the nested run against its parent for end-to-end traceability.
+
+Everything is **multi-tenant**: data is scoped to a **workspace**, and every API
+route re-checks the caller's role (owner / admin / editor / viewer) — the React
+client only mirrors those rules to hide what a role can't use. Workspaces are
+shared by email **invite**, and privileged actions append to an **audit log**
+while emitting **notifications** (persisted and pushed over Socket.IO).
+Workspace-scoped **variables** (plain) and **secrets** (encrypted, never returned
+to the client) are interpolated into node configs alongside credentials. Beyond
+the session API the browser uses, a separate **public REST API** (`/api/v1`,
+authenticated by hashed, scoped **API keys** with their own rate limiter) lets
+external systems list and trigger workflows and read runs.
 
 ```
  Editor (React Flow) ──save──▶ API (Express) ──enqueue──▶ Queue (BullMQ/Redis)
@@ -79,8 +91,10 @@ against each workflow's `trigger.schedule` nodes), in addition to a manual
   - *Triggers:* manual, webhook, cron schedule
   - *Actions:* HTTP request, transform (JS-free data shaping), email (SMTP),
     Slack/Discord webhook, database query (read-only by default)
+  - *Integrations:* GitHub (issues/comments) and Notion (pages), credential-backed
   - *AI:* a single LLM call, and a multi-step tool-using agent
   - *Logic:* condition (branching), loop/iterate, filter
+  - *Sub-workflows:* call another workflow as a node, with nested run tracking
   - *Output:* response
 - **Visual data mapping** — a data picker reads the live shape of every upstream
   node's output (and the trigger payload) so you point-and-click `{{references}}`
@@ -92,8 +106,14 @@ against each workflow's `trigger.schedule` nodes), in addition to a manual
 - **Error handling** — per-node retry with backoff and an explicit on-error
   policy (*stop* / *continue* / *route to an error branch*) for try/catch-style
   flows, plus optional **failure alerts** (Slack/email) when a run dead-letters.
-- **Templates gallery** — one-click, pre-wired example workflows with sample
-  data baked in, so a new workflow runs the moment it opens.
+- **Templates** — a **Built-in** gallery of one-click, pre-wired example
+  workflows (with sample data baked in, so a new workflow runs the moment it
+  opens), plus **My Templates**: save any workflow as a reusable, workspace-scoped
+  template (credential bindings stripped so no secret is ever captured), then
+  rename, edit, and instantiate it like the built-ins.
+- **Workflow organization** — group a growing workflow list into **folders** and
+  reusable **tags**; the dashboard adds search, sort, status/tag filters behind a
+  compact toolbar, a folder breadcrumb, and folder-aware creation.
 - **Execution engine** — topological DAG execution, `{{template}}`
   interpolation across trigger payload + upstream outputs, per-node timeouts,
   and full run/node-execution history for replay and debugging.
@@ -112,8 +132,36 @@ against each workflow's `trigger.schedule` nodes), in addition to a manual
   selection highlights, a non-blocking "X is editing" soft-lock, and graph edits
   that appear in near-real-time. See [Real-time collaboration](#real-time-collaboration).
 - **Encrypted credential vault** — see below.
-- **Workspaces, auth & roles** — JWT auth, multi-user workspaces with
-  owner/admin/member roles.
+- **Workspaces, RBAC & sharing** — JWT auth and multi-user workspaces with four
+  roles — **owner / admin / editor / viewer** — enforced on every route. Share a
+  workspace by email **invite** (accepted from an in-app inbox), manage members
+  and roles, and never grant a role above your own. The UI hides what a role
+  can't use; the server is always the source of truth.
+- **Audit log** — an admin/owner-only, filterable feed of who did what (invites,
+  role changes, publishes, credential and workflow changes, failed runs), keyset-
+  paginated and self-contained (the actor name survives the actor being removed).
+- **In-app notifications** — invites, role changes, and run failures arrive as
+  persisted notifications, pushed live over Socket.IO to every open tab with an
+  unread badge.
+- **Variables & secrets** — workspace-scoped, reusable values referenced in node
+  configs via `{{ vars.KEY }}` and `{{ secrets.KEY }}`. Variables are plain
+  values; secrets are AES-256-GCM encrypted at rest and **never returned to the
+  client** — decrypted only at execution time, like credentials.
+- **Public REST API** — a separate, API-key-authenticated surface (`/api/v1`)
+  for listing/triggering workflows and reading runs programmatically, with
+  scoped, hashed keys and per-key rate limiting (distinct from the session API).
+- **User profiles** — edit display name, upload a cropped **avatar** (shown in the
+  nav, presence, members list, and audit log), change password (current-password
+  verified), and set preferences (e.g. default landing section).
+- **App shell & navigation** — a calm slim top bar (brand, workspace switcher,
+  primary tabs, notifications, profile) over a collapsible left **side panel**
+  that groups Workspace (Runs, Analytics) and Settings (Members, Credentials,
+  Variables, API keys, Activity) by role. On phones it becomes a drawer; the whole
+  app is responsive and the desktop-first canvas shows a friendly read-only gate
+  on mobile.
+- **Onboarding** — a short, dismissible, reduced-motion-aware guided tour that
+  spotlights templates (on the dashboard) and the node palette, run, data picker,
+  and publish (in the editor) for first-time users, remembered once finished.
 - **Runs dashboard & analytics** — searchable run history, replay a past run,
   and aggregate charts (success/failure over time, top-failing workflows and
   nodes).
@@ -353,14 +401,23 @@ Key configuration:
   production `DATABASE_URL` on each release (e.g. as a Railway release command).
 
 > [!IMPORTANT]
-> **Cost implications.** Five always-on services (two Node processes + Postgres +
-> Redis + a static server) exceed Railway's free trial credit. Postgres and Redis
-> are billed for uptime + storage, and the api/worker run continuously to keep the
-> queue and realtime layer live. Expect a small monthly bill on the Hobby plan;
-> scale the worker to zero (or merge api+worker) to reduce idle cost. Treat
-> `CREDENTIALS_KEY`/`JWT_SECRET` as production secrets via Railway's secret store.
+> **Cost implications (re-flagged for v3).** The topology is unchanged — still
+> **five always-on services** (two Node processes + Postgres + Redis + a static
+> server) — which exceeds Railway's free trial credit. Postgres and Redis are
+> billed for uptime + storage, and the api/worker run continuously to keep the
+> queue and realtime layer live. v3 adds more tables and, notably, stores user
+> **avatars as small data-URL strings in Postgres** (no object store) — a modest,
+> bounded bump to row size and DB storage, not a new service. Expect a small
+> monthly bill on the Hobby plan; scale the worker to zero (or merge api+worker)
+> to reduce idle cost. Treat `CREDENTIALS_KEY`/`JWT_SECRET` as production secrets
+> via Railway's secret store.
+>
+> **Redeploy checklist (v3).** Push to `main`, let each service rebuild, and run
+> `npx prisma migrate deploy --workspace=server` against the production
+> `DATABASE_URL` so the new migrations (workspace templates, user profile columns,
+> and the rest of v3/v3.5) apply before traffic hits the new code.
 
 **Live URL:** _not yet wired — populate here and in the web service's
-`VITE_API_URL` once the project is deployed._ The app itself needs no source
-change: it reads `VITE_API_URL` (REST + Socket.IO base) with a `localhost:4000`
-fallback for local dev.
+`VITE_API_URL` once the project is deployed._ No source change is needed: the app
+reads `VITE_API_URL` (REST + Socket.IO base) with a `localhost:4000` fallback for
+local dev, so wiring the URL is purely a deploy-time build variable.

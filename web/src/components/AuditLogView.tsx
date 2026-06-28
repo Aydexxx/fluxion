@@ -5,6 +5,7 @@ import { timeAgo } from "../lib/format";
 import { useToast } from "./ui/toast";
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from "./ui/Dialog";
 import { Button } from "./ui/Button";
+import { Avatar } from "./ui/Avatar";
 import { Label, Select, TextInput } from "./Field";
 import { HistoryIcon } from "./icons";
 
@@ -55,11 +56,20 @@ function EntryLine({ entry }: { entry: AuditLogEntry }) {
     entry.action === "member.role_changed" && meta.from && meta.to ? ` (${String(meta.from)} → ${String(meta.to)})` : "";
   return (
     <li className="flex items-start justify-between gap-3 rounded-lg border border-white/6 bg-white/[0.02] px-3 py-2">
-      <div className="min-w-0 text-[12.5px] leading-relaxed">
-        <span className="font-medium text-ink">{actor}</span>{" "}
-        <span className="text-muted">{actionLabel(entry.action)}</span>{" "}
-        {entry.targetName ? <span className="text-ink">{entry.targetName}</span> : null}
-        <span className="text-faint">{roleChange}</span>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <Avatar
+          name={entry.actorName}
+          avatarUrl={entry.actorAvatarUrl}
+          size={24}
+          className="mt-0.5"
+          title={actor}
+        />
+        <div className="min-w-0 text-[12.5px] leading-relaxed">
+          <span className="font-medium text-ink">{actor}</span>{" "}
+          <span className="text-muted">{actionLabel(entry.action)}</span>{" "}
+          {entry.targetName ? <span className="text-ink">{entry.targetName}</span> : null}
+          <span className="text-faint">{roleChange}</span>
+        </div>
       </div>
       <span className="shrink-0 text-[11px] text-faint" title={new Date(entry.createdAt).toLocaleString()}>
         {timeAgo(entry.createdAt)}

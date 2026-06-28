@@ -6,8 +6,16 @@ import { prisma } from "../services/prisma";
 import { hashPassword, verifyPassword } from "../services/password";
 import { signAccessToken } from "../services/jwt";
 import { toSafeUser } from "../services/users";
+import { changePassword, removeAvatar, setAvatar, updateProfile } from "../services/profile";
 import { createDefaultWorkspace } from "../services/workspaces";
-import type { LoginInput, RegisterInput } from "../validation/auth.schemas";
+import { currentUserId } from "../middleware/auth";
+import type {
+  ChangePasswordInput,
+  LoginInput,
+  RegisterInput,
+  UpdateAvatarInput,
+  UpdateProfileInput,
+} from "../validation/auth.schemas";
 
 interface AuthResponse {
   token: string;
@@ -66,4 +74,34 @@ export async function me(req: Request, res: Response<SafeUser | ApiError>): Prom
     return;
   }
   res.json(toSafeUser(user));
+}
+
+/** PATCH /auth/profile -> update display name and/or preferences. */
+export async function updateProfileController(
+  req: Request<unknown, unknown, UpdateProfileInput>,
+  res: Response<SafeUser>,
+): Promise<void> {
+  res.json(await updateProfile(currentUserId(req), req.body));
+}
+
+/** POST /auth/password -> change password after verifying the current one. */
+export async function changePasswordController(
+  req: Request<unknown, unknown, ChangePasswordInput>,
+  res: Response,
+): Promise<void> {
+  await changePassword(currentUserId(req), req.body);
+  res.status(204).end();
+}
+
+/** PUT /auth/avatar -> store a cropped avatar image. */
+export async function updateAvatarController(
+  req: Request<unknown, unknown, UpdateAvatarInput>,
+  res: Response<SafeUser>,
+): Promise<void> {
+  res.json(await setAvatar(currentUserId(req), req.body.avatarUrl));
+}
+
+/** DELETE /auth/avatar -> revert to initials. */
+export async function deleteAvatarController(req: Request, res: Response<SafeUser>): Promise<void> {
+  res.json(await removeAvatar(currentUserId(req)));
 }

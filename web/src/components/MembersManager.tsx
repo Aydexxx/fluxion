@@ -9,6 +9,7 @@ import { Dialog, DialogBody, DialogFooter, DialogHeader } from "./ui/Dialog";
 import { Button } from "./ui/Button";
 import { Label, Select, TextInput } from "./Field";
 import { Badge } from "./ui/Badge";
+import { Avatar } from "./ui/Avatar";
 import { MailIcon, PlusIcon, RotateIcon, TrashIcon } from "./icons";
 
 interface Props {
@@ -218,12 +219,15 @@ export function MembersManager({ open, workspace, onClose }: Props) {
                 key={member.userId}
                 className="flex items-center justify-between gap-3 rounded-lg border border-white/6 bg-white/[0.02] px-3 py-2"
               >
-                <div className="min-w-0">
-                  <p className="truncate text-[13px] font-medium text-ink">
-                    {member.name}
-                    {member.userId === currentUser?.id ? <span className="text-faint"> (you)</span> : null}
-                  </p>
-                  <p className="truncate text-[11.5px] text-faint">{member.email}</p>
+                <div className="flex min-w-0 items-center gap-2.5">
+                  <Avatar name={member.name} email={member.email} avatarUrl={member.avatarUrl} size={30} />
+                  <div className="min-w-0">
+                    <p className="truncate text-[13px] font-medium text-ink">
+                      {member.name}
+                      {member.userId === currentUser?.id ? <span className="text-faint"> (you)</span> : null}
+                    </p>
+                    <p className="truncate text-[11.5px] text-faint">{member.email}</p>
+                  </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {canEditRole(member) ? (

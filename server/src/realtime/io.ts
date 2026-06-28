@@ -13,9 +13,12 @@ import { registerPresenceHandlers, type PresenceDeps, type SocketData } from "./
 /** Real presence dependencies: authorize against workspace membership, resolve names from the DB. */
 const presenceDeps: PresenceDeps = {
   authorize: (workflowId, userId) => canAccessWorkflow(workflowId, userId),
-  resolveName: async (userId) => {
-    const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
-    return user?.name ?? "Someone";
+  resolveIdentity: async (userId) => {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, avatarUrl: true },
+    });
+    return { name: user?.name ?? "Someone", avatarUrl: user?.avatarUrl ?? null };
   },
 };
 

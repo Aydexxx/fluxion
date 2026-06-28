@@ -36,6 +36,8 @@ export interface Participant {
   socketId: string;
   userId: string;
   name: string;
+  /** The user's avatar (data URL), or null to render initials. */
+  avatarUrl: string | null;
   /** Deterministic per-user color, so a person looks the same everywhere. */
   color: string;
 }
@@ -59,11 +61,16 @@ export interface SocketData {
   presence?: PresenceSocketState;
 }
 
+export interface PresenceIdentity {
+  name: string;
+  avatarUrl: string | null;
+}
+
 export interface PresenceDeps {
   /** Resolve whether `userId` may join the workflow's room (workspace membership). */
   authorize: (workflowId: string, userId: string) => Promise<boolean>;
-  /** Resolve the display name for a user id. */
-  resolveName: (userId: string) => Promise<string>;
+  /** Resolve the display identity (name + avatar) for a user id. */
+  resolveIdentity: (userId: string) => Promise<PresenceIdentity>;
 }
 
 /** A pleasant, high-contrast palette; users map onto it deterministically. */
@@ -119,11 +126,12 @@ export function registerPresenceHandlers(io: IOServer, socket: Socket, deps: Pre
     // a tab navigates between workflows on the same connection.
     if (data.presence && data.presence.workflowId !== workflowId) leaveCurrent();
 
-    const name = await deps.resolveName(data.userId);
+    const identity = await deps.resolveIdentity(data.userId);
     const participant: Participant = {
       socketId: socket.id,
       userId: data.userId,
-      name,
+      name: identity.name,
+      avatarUrl: identity.avatarUrl,
       color: colorForUser(data.userId),
     };
     data.presence = { workflowId, participant, selection: [], editingNodeId: null };

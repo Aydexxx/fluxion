@@ -113,6 +113,9 @@ interface EditorState {
   versionsLoading: boolean;
   /** A past version being previewed read-only on the canvas (null when editing the draft). */
   previewVersion: WorkflowVersionDetail | null;
+  /** True when the editor is shown read-only on a phone (the canvas is view-only). */
+  mobileReadOnly: boolean;
+  setMobileReadOnly: (value: boolean) => void;
 
   /** Workflow-level failure alert, or null when none is configured. */
   failureNotify: FailureNotifyConfig | null;
@@ -319,6 +322,7 @@ export const useEditor = create<EditorState>((set, get) => ({
   versions: [],
   versionsLoading: false,
   previewVersion: null,
+  mobileReadOnly: false,
   failureNotify: null,
   failureAlertOpen: false,
   ...EMPTY_RUN_STATE,
@@ -437,6 +441,7 @@ export const useEditor = create<EditorState>((set, get) => ({
       versions: [],
       versionsLoading: false,
       previewVersion: null,
+      mobileReadOnly: false,
       failureNotify: null,
       failureAlertOpen: false,
       ...EMPTY_RUN_STATE,
@@ -765,6 +770,8 @@ export const useEditor = create<EditorState>((set, get) => ({
   },
 
   setSnapToGrid: (snap) => set({ snapToGrid: snap }),
+
+  setMobileReadOnly: (value) => set({ mobileReadOnly: value }),
   setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
   setShortcutsOpen: (open) => set({ shortcutsOpen: open }),
 

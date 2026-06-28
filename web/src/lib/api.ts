@@ -21,6 +21,9 @@ import type {
   RunSummary,
   Tag,
   TemplateSummary,
+  User,
+  UserPreferences,
+  UserTemplate,
   UpdateWorkflowResponse,
   Workflow,
   WorkflowDefinition,
@@ -101,6 +104,25 @@ export const authApi = {
   },
   async workspaces(): Promise<Workspace[]> {
     const { data } = await api.get<Workspace[]>("/workspaces");
+    return data;
+  },
+  /** Update display name and/or preferences; returns the refreshed user. */
+  async updateProfile(patch: { name?: string; preferences?: UserPreferences }): Promise<User> {
+    const { data } = await api.patch<User>("/auth/profile", patch);
+    return data;
+  },
+  /** Change password after verifying the current one. */
+  async changePassword(currentPassword: string, newPassword: string): Promise<void> {
+    await api.post("/auth/password", { currentPassword, newPassword });
+  },
+  /** Store a cropped avatar (a base64 image data URL); returns the refreshed user. */
+  async setAvatar(avatarUrl: string): Promise<User> {
+    const { data } = await api.put<User>("/auth/avatar", { avatarUrl });
+    return data;
+  },
+  /** Remove the avatar, reverting to initials. */
+  async removeAvatar(): Promise<User> {
+    const { data } = await api.delete<User>("/auth/avatar");
     return data;
   },
 };
@@ -264,6 +286,33 @@ export const templateApi = {
   /** Create a new workflow pre-populated from a template; resolves with the new workflow. */
   async instantiate(templateId: string, workspaceId: string, name?: string): Promise<Workflow> {
     const { data } = await api.post<Workflow>(`/templates/${templateId}/instantiate`, { workspaceId, name });
+    return data;
+  },
+
+  /** The workspace's user-created templates (the "My Templates" gallery). */
+  async listCustom(workspaceId: string): Promise<UserTemplate[]> {
+    const { data } = await api.get<UserTemplate[]>("/templates/custom", { params: { workspaceId } });
+    return data;
+  },
+  /** Capture a workflow's current draft as a reusable workspace template. */
+  async createCustom(input: { workflowId: string; name: string; description?: string }): Promise<UserTemplate> {
+    const { data } = await api.post<UserTemplate>("/templates/custom", input);
+    return data;
+  },
+  /** Rename / re-describe a user template. */
+  async updateCustom(
+    templateId: string,
+    patch: { name?: string; description?: string | null },
+  ): Promise<UserTemplate> {
+    const { data } = await api.patch<UserTemplate>(`/templates/custom/${templateId}`, patch);
+    return data;
+  },
+  async removeCustom(templateId: string): Promise<void> {
+    await api.delete(`/templates/custom/${templateId}`);
+  },
+  /** Create a new workflow pre-populated from a user template. */
+  async instantiateCustom(templateId: string, name?: string): Promise<Workflow> {
+    const { data } = await api.post<Workflow>(`/templates/custom/${templateId}/instantiate`, { name });
     return data;
   },
 };

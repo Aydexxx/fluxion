@@ -25,7 +25,10 @@ export function NodePalette() {
   const visibleCategories = CATEGORY_ORDER.filter((catId) => filtered.some((s) => s.category === catId));
 
   return (
-    <aside className="flex h-full w-[264px] shrink-0 flex-col border-r border-white/8 bg-surface/40 backdrop-blur-xl">
+    <aside
+      data-tour="node-palette"
+      className="flex h-full w-[264px] shrink-0 flex-col border-r border-white/8 bg-surface/40 backdrop-blur-xl"
+    >
       <div className="px-5 pb-3 pt-5">
         <h2 className="font-display text-[13px] font-semibold tracking-wide text-ink">Node library</h2>
         <p className="mt-0.5 text-[12px] text-faint">Drag onto the canvas, or click to drop in.</p>

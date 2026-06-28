@@ -1,9 +1,18 @@
 // Wire types mirroring the Fluxion backend (Phase 1 & 2).
 
+/** Where the user lands after signing in. */
+export type DefaultLanding = "workflows" | "templates" | "runs" | "analytics";
+
+export interface UserPreferences {
+  defaultLanding?: DefaultLanding;
+}
+
 export interface User {
   id: string;
   email: string;
   name: string;
+  avatarUrl: string | null;
+  preferences: UserPreferences;
   createdAt: string;
 }
 
@@ -29,6 +38,7 @@ export interface WorkspaceMember {
   userId: string;
   name: string;
   email: string;
+  avatarUrl: string | null;
   role: WorkspaceRole;
 }
 
@@ -88,6 +98,16 @@ export interface TemplateSummary {
   /** Node types used, in first-appearance order, for the card's chips. */
   nodeTypes: string[];
   definition: WorkflowDefinition;
+  /** "builtin" for the seeded catalog, "custom" for user-created workspace templates. */
+  kind: "builtin" | "custom";
+}
+
+/** A user-created, workspace-scoped template (GET /templates/custom). */
+export interface UserTemplate extends TemplateSummary {
+  kind: "custom";
+  workspaceId: string;
+  createdByName: string | null;
+  createdAt: string;
 }
 
 /** A flat (non-nested) grouping of workflows within a workspace. */
@@ -424,6 +444,7 @@ export interface AuditLogEntry {
   action: string;
   actorId: string | null;
   actorName: string | null;
+  actorAvatarUrl: string | null;
   targetType: string | null;
   targetId: string | null;
   targetName: string | null;

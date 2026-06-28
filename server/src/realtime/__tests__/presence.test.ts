@@ -25,7 +25,7 @@ const WORKFLOW = "wf_1";
 
 const allowAll: PresenceDeps = {
   authorize: async () => true,
-  resolveName: async (userId) => `User ${userId}`,
+  resolveIdentity: async (userId) => ({ name: `User ${userId}`, avatarUrl: null }),
 };
 
 let httpServer: HttpServer;

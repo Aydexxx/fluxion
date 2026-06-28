@@ -36,7 +36,9 @@ export function WorkflowCanvas() {
   const status = useEditor((s) => s.status);
   const workflowId = useEditor((s) => s.id);
   const snapToGrid = useEditor((s) => s.snapToGrid);
-  const readOnly = useEditor((s) => s.previewVersion !== null);
+  // Read-only while previewing a past version, or when the editor is shown
+  // view-only on a phone.
+  const readOnly = useEditor((s) => s.previewVersion !== null || s.mobileReadOnly);
   const onNodesChange = useEditor((s) => s.onNodesChange);
   const onEdgesChange = useEditor((s) => s.onEdgesChange);
   const onConnect = useEditor((s) => s.onConnect);

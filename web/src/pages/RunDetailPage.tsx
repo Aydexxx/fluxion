@@ -5,7 +5,6 @@ import { subscribeRunStream } from "../lib/runStream";
 import { buildTimeline, type TimelineBar } from "../editor/timeline";
 import { statusVisual } from "../editor/runStatus";
 import { StatusBadge, JsonBlock } from "../editor/RunBits";
-import { TopNav } from "../components/TopNav";
 import { ChevronRightIcon, CloseIcon, HistoryIcon, PlayIcon, SpinnerIcon } from "../components/icons";
 import { formatDuration, timeAgo } from "../lib/format";
 import { navigate } from "../lib/router";
@@ -100,11 +99,7 @@ export function RunDetailPage({ runId }: { runId: string }) {
   }, [childRuns]);
 
   return (
-    <div className="relative h-screen overflow-y-auto bg-base">
-      <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 h-[360px] bloom opacity-70" />
-      <TopNav active="runs" />
-
-      <main className="relative mx-auto max-w-6xl px-6 pb-20 pt-8">
+    <main className="relative mx-auto max-w-6xl px-4 pb-20 pt-6 sm:px-6 sm:pt-8">
         <button
           type="button"
           onClick={() => navigate("/runs")}
@@ -139,8 +134,7 @@ export function RunDetailPage({ runId }: { runId: string }) {
             </div>
           </>
         )}
-      </main>
-    </div>
+    </main>
   );
 }
 

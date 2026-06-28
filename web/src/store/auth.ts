@@ -33,6 +33,8 @@ interface AuthState {
   login: (email: string, password: string) => Promise<void>;
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => void;
+  /** Replace the current user (after a profile/avatar/preferences update). */
+  setUser: (user: User) => void;
   /** Switch the active workspace (persisted across reloads). */
   setActiveWorkspace: (workspaceId: string) => void;
   /** Re-fetch memberships (after accepting an invite, creating/deleting a workspace, role change). */
@@ -80,6 +82,8 @@ export const useAuth = create<AuthState>((set, get) => ({
     writeActiveId(null);
     set({ status: "anon", user: null, workspaces: [], workspace: null });
   },
+
+  setUser: (user) => set({ user }),
 
   setActiveWorkspace: (workspaceId) => {
     const target = get().workspaces.find((w) => w.id === workspaceId);

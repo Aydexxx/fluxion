@@ -112,7 +112,13 @@ export function connectPresence(workflowId: string, onGraphOps: (ops: GraphOp[])
       const sel: PresenceStore["selections"] = {};
       const edit: PresenceStore["editing"] = {};
       for (const p of participants) {
-        next[p.socketId] = { socketId: p.socketId, userId: p.userId, name: p.name, color: p.color };
+        next[p.socketId] = {
+          socketId: p.socketId,
+          userId: p.userId,
+          name: p.name,
+          avatarUrl: p.avatarUrl,
+          color: p.color,
+        };
         sel[p.socketId] = p.selection;
         edit[p.socketId] = p.editingNodeId;
       }

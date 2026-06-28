@@ -213,3 +213,36 @@ describe("workflows list: combined filters", () => {
     expect(names(res)).toEqual(["Invoice sync"]);
   });
 });
+
+describe("workflows create: folder assignment", () => {
+  it("files the new workflow into the given folder", async () => {
+    const owner = await registerUser("Owner");
+    const folder = await request(app)
+      .post(`/workspaces/${owner.workspaceId}/folders`)
+      .set(...auth(owner.token))
+      .send({ name: "Ops" });
+
+    const wf = await createWorkflow(owner.token, owner.workspaceId, { name: "Inside", folderId: folder.body.id });
+    expect(wf.status).toBe(201);
+    expect(wf.body.folder).toEqual({ id: folder.body.id, name: "Ops" });
+  });
+
+  it("leaves the workflow unfiled when no folderId is given", async () => {
+    const owner = await registerUser("Owner");
+    const wf = await createWorkflow(owner.token, owner.workspaceId, { name: "Loose" });
+    expect(wf.status).toBe(201);
+    expect(wf.body.folder).toBeNull();
+  });
+
+  it("rejects a folderId belonging to another workspace", async () => {
+    const owner = await registerUser("Owner");
+    const other = await registerUser("Other");
+    const foreign = await request(app)
+      .post(`/workspaces/${other.workspaceId}/folders`)
+      .set(...auth(other.token))
+      .send({ name: "Foreign" });
+
+    const wf = await createWorkflow(owner.token, owner.workspaceId, { name: "Bad", folderId: foreign.body.id });
+    expect(wf.status).toBe(404);
+  });
+});
