@@ -18,7 +18,7 @@ import { useEditorShortcuts } from "../editor/useEditorShortcuts";
 import { connectPresence, disconnectPresence, sendSelection } from "../editor/presence";
 import { CredentialsManager } from "../components/CredentialsManager";
 import { VariablesManager } from "../components/VariablesManager";
-import { useIsMobile } from "../lib/useMediaQuery";
+import { useIsTouchMobile } from "../lib/useMediaQuery";
 import { navigate } from "../lib/router";
 import { Logo, SpinnerIcon } from "../components/icons";
 
@@ -39,11 +39,12 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
   const applyRemoteGraphOps = useEditor((s) => s.applyRemoteGraphOps);
   const setMobileReadOnly = useEditor((s) => s.setMobileReadOnly);
 
-  // Phones get a friendly gate over the desktop-first canvas, with an optional
-  // read-only peek. While on a phone the canvas + chrome run view-only.
-  const isMobile = useIsMobile();
+  // Only *genuine* touch phones get the friendly gate + read-only canvas. A
+  // shrunk or split-screen desktop window (fine pointer) keeps the full editor —
+  // a narrow viewport is not a phone.
+  const isPhone = useIsTouchMobile();
   const [peeking, setPeeking] = useState(false);
-  const editingHidden = previewing || isMobile;
+  const editingHidden = previewing || isPhone;
 
   useEffect(() => {
     void load(workflowId);
@@ -52,8 +53,8 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
 
   // Mirror the phone state into the store so the canvas renders view-only.
   useEffect(() => {
-    setMobileReadOnly(isMobile);
-  }, [isMobile, setMobileReadOnly]);
+    setMobileReadOnly(isPhone);
+  }, [isPhone, setMobileReadOnly]);
 
   // Real-time multi-user awareness: join the workflow's presence room, mirror
   // peers' graph edits into the store, and broadcast our own selection.
@@ -89,8 +90,8 @@ export function EditorPage({ workflowId }: { workflowId: string }) {
             <VersionHistoryDrawer />
             {status === "loading" ? <LoadingVeil /> : null}
             {status === "error" ? <ErrorVeil message={error} /> : null}
-            {isMobile ? null : <EditorTour />}
-            {isMobile && !peeking ? <MobileEditorGate onPeek={() => setPeeking(true)} /> : null}
+            {isPhone ? null : <EditorTour />}
+            {isPhone && !peeking ? <MobileEditorGate onPeek={() => setPeeking(true)} /> : null}
           </main>
         </div>
       </div>
