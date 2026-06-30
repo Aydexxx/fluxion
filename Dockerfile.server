@@ -11,7 +11,12 @@ RUN npm run build --workspace=server
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# npm workspaces hoists most deps to the root node_modules, but packages with
+# exact-pinned/conflicting versions (e.g. ioredis 5.10.1) stay nested under the
+# workspace's own server/node_modules. Copy BOTH trees so Node's resolution from
+# /app/server/dist/** finds every runtime dependency.
 COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/server/node_modules ./server/node_modules
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=build /app/server/prisma ./server/prisma
